@@ -4,12 +4,16 @@ MASTER: kSharedPy/kshared/kGenAi.py - products and kSharedPy's own folders recei
 A missing package is an expected state: ToolReportableException with the uvx install hint.
 
     GenAi, Types, Errors = kGenAi.Load("batch_image_gen.py")
+    ApiKey = kGenAi.RequireKey()                     # exit 2 when neither GEMINI_API_KEY nor GOOGLE_API_KEY is set
 """
 import importlib
 import importlib.util
+import os
 
-from kShared import ToolReportableException, kS, kToolException
+from kShared import ToolInputException, ToolReportableException, kS, kToolException
 
+KEY_VARIABLES = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]  # google-genai reads either; GEMINI_API_KEY wins here
+MISSING_KEY = "GEMINI_API_KEY environment variable required (get one from https://aistudio.google.com/apikey)"
 INSTALL_HINT = "google-genai not installed. Run with:\n  uvx --with google-genai python {Script} [args]"
 
 
@@ -33,3 +37,31 @@ class kGenAi:
         except Exception as e:
             kS.GlobalErrorHandler(e, "kGenAi.Load")
             return None, None, None
+
+    @staticmethod
+    def HasKey():
+        """True when GEMINI_API_KEY or GOOGLE_API_KEY is set (non-empty)."""
+        if kS.ErrorMode:
+            return False
+        try:
+            return any(os.environ.get(Name) for Name in KEY_VARIABLES)
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kGenAi.HasKey")
+            return False
+
+    @staticmethod
+    def RequireKey(Hint=""):
+        """The API key (GEMINI_API_KEY, else GOOGLE_API_KEY). A missing key is an expected state: ToolInputException
+        (exit 2) with the get-a-key message, Hint appended."""
+        if kS.ErrorMode:
+            return ""
+        try:
+            for Name in KEY_VARIABLES:
+                if os.environ.get(Name):
+                    return os.environ[Name]
+            raise ToolInputException(MISSING_KEY + Hint)
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kGenAi.RequireKey")
+            return ""

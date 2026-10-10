@@ -37,7 +37,10 @@ class kSavedReport:
             if not os.path.isfile(self.Path):
                 raise ToolInputException(f"not found: {self.Path}")
             with open(self.Path, encoding="utf-8") as File:
-                self.Data = json.load(File)
+                try:
+                    self.Data = json.load(File)
+                except (json.JSONDecodeError, UnicodeDecodeError):  # ERROR-SUPPRESSED-JUSTIFIED: a damaged file is bad input (exit 2), said below
+                    self.Data = None
             if not isinstance(self.Data, dict) or not self.Data.get("payloads"):
                 raise ToolInputException(f"not an error report: {self.Path}")
             return self.Data

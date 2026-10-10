@@ -23,12 +23,12 @@ Flags:
 First run downloads the model (~470MB for medium.en) to the HF cache.
 """
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
 
-from _ffmpeg import kDependency, kFfmpeg
+from kFfmpeg import kDependency, kFfmpeg
+from kJsonFile import kJsonFile
 from kShared import ToolInputException, kRun, kS, kToolException
 
 
@@ -166,8 +166,8 @@ class kTranscribeApp:
             Payload = Transcriber.Transcribe()
             if kS.ErrorMode:
                 return 1
-            Out.parent.mkdir(parents=True, exist_ok=True)
-            Out.write_text(json.dumps(Payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            if not kJsonFile.Save(Out, Payload):
+                return 1
             Elapsed = time.monotonic() - Transcriber.StartTime
             if not Args.quiet:
                 Speed = Transcriber.Duration / Elapsed if Elapsed > 0 else 0

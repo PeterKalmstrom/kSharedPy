@@ -38,6 +38,7 @@ import sys
 from pathlib import Path
 
 from _transcript import kTranscript
+from kJsonFile import kJsonFile
 from kShared import ToolInputException, kRun, kS, kToolException
 
 
@@ -224,10 +225,9 @@ class kReviewApp:
             Parser.add_argument("--max-line", type=int, default=100)
             Args = Parser.parse_args()
 
-            EdlPath = Path(Args.edl)
-            if not EdlPath.exists():
-                raise ToolInputException(f"EDL not found: {EdlPath}")
-            Edl = json.loads(EdlPath.read_text(encoding="utf-8"))
+            Edl = kJsonFile.Load(Args.edl, "EDL")
+            if kS.ErrorMode:
+                return 1
 
             if Args.restore:
                 NewEdl, Restored = kEdlReview.Restore(Edl, Args.restore)
@@ -239,10 +239,9 @@ class kReviewApp:
 
             if not Args.transcript:
                 raise ToolInputException("--transcript required for review mode")
-            TranscriptPath = Path(Args.transcript)
-            if not TranscriptPath.exists():
-                raise ToolInputException(f"transcript not found: {TranscriptPath}")
-            Transcript = json.loads(TranscriptPath.read_text(encoding="utf-8"))
+            Transcript = kJsonFile.Load(Args.transcript, "transcript")
+            if kS.ErrorMode:
+                return 1
             Markdown = kEdlReview.Render(Edl, Transcript, Args.only, Args.context_s, Args.max_line)
             if kS.ErrorMode:
                 return 1

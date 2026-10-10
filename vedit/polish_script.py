@@ -23,7 +23,6 @@ or formalize the voice.
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -56,20 +55,6 @@ Return ONLY the cleaned script text. No preamble, no explanation, no markdown fo
 
 class kScriptPolisher:
     """One Gemini polish of one reading script."""
-
-    @staticmethod
-    def CheckPrerequisites():
-        """The API key is an expected state: missing means exit 2 (a missing google-genai is kGenAi.Load's)."""
-        if kS.ErrorMode:
-            return
-        try:
-            if "GEMINI_API_KEY" not in os.environ and "GOOGLE_API_KEY" not in os.environ:
-                raise ToolInputException("GEMINI_API_KEY (or GOOGLE_API_KEY) not set.")
-        except kToolException:
-            raise
-        except Exception as e:
-            kS.GlobalErrorHandler(e, "kScriptPolisher.CheckPrerequisites")
-            return
 
     @staticmethod
     def Polish(Text, Model, Voice):
@@ -121,7 +106,7 @@ class kPolishScriptApp:
             Out = Path(Args.out)
             if not Input.exists():
                 raise ToolInputException(f"input not found: {Input}")
-            kScriptPolisher.CheckPrerequisites()
+            kGenAi.RequireKey()  # exit 2; a missing google-genai is kGenAi.Load's (exit 1)
             Text = Input.read_text(encoding="utf-8")
             Polished = kScriptPolisher.Polish(Text, Args.model, Args.voice)
             if kS.ErrorMode:

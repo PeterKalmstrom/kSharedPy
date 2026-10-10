@@ -41,7 +41,7 @@ Exit codes and errors (the kShared error pattern):
        installed, or an unexpected error was reported (the run halts on it)
     2  bad input: missing --prompt/--spec, --prompt without --out, GEMINI_API_KEY
        not set, spec file missing or malformed, a starting-frame --image / "image"
-       that does not exist, or --mute / "mute" without ffmpeg on PATH
+       that does not exist, or --mute / "mute" without ffmpeg (PATH or static-ffmpeg)
     4  an unexpected error whose report waits for the user's yes
        (stderr: "ERROR-REPORT-PENDING: <file>")
     Batch choice: a refusal BY THE API for one job (google.genai APIError - e.g.
@@ -73,15 +73,14 @@ Transient errors - retry once before doing anything else:
 """
 
 import argparse
-import json
 import os
-import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
 
+from kFfmpeg import kFfmpeg
 from kGenAi import kGenAi
+from kJsonFile import kJsonFile
 from kShared import ToolInputException, kRun, kS, kToolException
 
 DEFAULT_MODEL = "veo-3.1-generate-preview"
@@ -109,11 +108,9 @@ class kVideoJob:
         if kS.ErrorMode:
             return []
         try:
-            if not os.path.isfile(SpecPath):
-                raise ToolInputException(f"spec file not found: {SpecPath}")
-            with open(SpecPath, encoding="utf-8") as File:
-                Text = File.read()
-            Spec = kVideoJob.ParseJson(Text, SpecPath)
+            Spec = kJsonFile.Load(SpecPath, "spec file")
+            if kS.ErrorMode:
+                return []
             if not isinstance(Spec, list):
                 raise ToolInputException(f"spec must be a JSON list of {{prompt, out}} entries: {SpecPath}")
             Jobs = []
@@ -132,22 +129,6 @@ class kVideoJob:
             return []
 
     @staticmethod
-    def ParseJson(Text, SpecPath):
-        """The parsed spec; malformed JSON is a spec mistake (exit 2), not an unexpected error."""
-        if kS.ErrorMode:
-            return None
-        try:
-            try:
-                return json.loads(Text)
-            except json.JSONDecodeError as Bad:  # ERROR-SUPPRESSED-JUSTIFIED: converted to the expected ToolInputException, which reaches the user
-                raise ToolInputException(f"spec file is not valid JSON ({Bad}): {SpecPath}")
-        except kToolException:
-            raise
-        except Exception as e:
-            kS.GlobalErrorHandler(e, "kVideoJob.ParseJson")
-            return None
-
-    @staticmethod
     def Validate(Jobs):
         """Preconditions of every job, checked before the first paid call: image files exist, ffmpeg for mute."""
         if kS.ErrorMode:
@@ -156,8 +137,8 @@ class kVideoJob:
             for Job in Jobs:
                 if Job.ImagePath and not os.path.isfile(Job.ImagePath):
                     raise ToolInputException(f"starting-frame image not found: {Job.ImagePath}")
-            if any(Job.Mute for Job in Jobs) and shutil.which("ffmpeg") is None:
-                raise ToolInputException("--mute needs ffmpeg on PATH (not found)")
+            if any(Job.Mute for Job in Jobs) and not kFfmpeg.Find():
+                raise ToolInputException("--mute needs ffmpeg on PATH or the static-ffmpeg package (not found)")
         except kToolException:
             raise
         except Exception as e:
@@ -251,8 +232,8 @@ class kVideoGenerator:
             return
         try:
             TmpPath = str(OutPath) + ".silent.mp4"
-            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(OutPath),
-                            "-an", "-c:v", "copy", TmpPath], check=True)
+            if not kFfmpeg.Run(["-i", OutPath, "-an", "-c:v", "copy", TmpPath]):
+                return
             os.replace(TmpPath, OutPath)
         except Exception as e:
             kS.GlobalErrorHandler(e, f"kVideoGenerator.StripAudio(out={OutPath})")
@@ -320,9 +301,7 @@ class kBatchVideoGenApp:
                 raise ToolInputException("Either --prompt + --out OR --spec required")
             if Args.prompt and not Args.out:
                 raise ToolInputException("--prompt requires --out")
-            if not os.environ.get("GEMINI_API_KEY"):
-                raise ToolInputException("GEMINI_API_KEY environment variable required "
-                                         "(get one from https://aistudio.google.com/apikey)")
+            ApiKey = kGenAi.RequireKey()
 
             if Args.spec:
                 Jobs = kVideoJob.FromSpec(Args.spec, Args)
@@ -333,7 +312,7 @@ class kBatchVideoGenApp:
             if kS.ErrorMode:
                 return 1
 
-            Generator = kVideoGenerator(os.environ["GEMINI_API_KEY"], Args.quiet)
+            Generator = kVideoGenerator(ApiKey, Args.quiet)
             Successes = 0
             for Job in Jobs:
                 if Generator.Generate(Job):

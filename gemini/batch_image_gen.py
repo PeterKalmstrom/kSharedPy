@@ -62,12 +62,12 @@ Notes:
 """
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
 
 from kGenAi import kGenAi
+from kJsonFile import kJsonFile
 from kShared import ToolInputException, kRun, kS, kToolException
 
 DEFAULT_MODEL = "gemini-3.1-flash-image-preview"
@@ -91,11 +91,9 @@ class kImageJob:
         if kS.ErrorMode:
             return []
         try:
-            if not os.path.isfile(SpecPath):
-                raise ToolInputException(f"spec file not found: {SpecPath}")
-            with open(SpecPath, encoding="utf-8") as File:
-                Text = File.read()
-            Spec = kImageJob.ParseJson(Text, SpecPath)
+            Spec = kJsonFile.Load(SpecPath, "spec file")
+            if kS.ErrorMode:
+                return []
             if not isinstance(Spec, list):
                 raise ToolInputException(f"spec must be a JSON list of {{prompt, out}} entries: {SpecPath}")
             Jobs = []
@@ -110,22 +108,6 @@ class kImageJob:
         except Exception as e:
             kS.GlobalErrorHandler(e, f"kImageJob.FromSpec(spec={SpecPath})")
             return []
-
-    @staticmethod
-    def ParseJson(Text, SpecPath):
-        """The parsed spec; malformed JSON is a spec mistake (exit 2), not an unexpected error."""
-        if kS.ErrorMode:
-            return None
-        try:
-            try:
-                return json.loads(Text)
-            except json.JSONDecodeError as Bad:  # ERROR-SUPPRESSED-JUSTIFIED: converted to the expected ToolInputException, which reaches the user
-                raise ToolInputException(f"spec file is not valid JSON ({Bad}): {SpecPath}")
-        except kToolException:
-            raise
-        except Exception as e:
-            kS.GlobalErrorHandler(e, "kImageJob.ParseJson")
-            return None
 
 
 class kImageGenerator:
@@ -234,9 +216,7 @@ class kBatchImageGenApp:
                 raise ToolInputException("Either --prompt + --out OR --spec required")
             if Args.prompt and not Args.out:
                 raise ToolInputException("--prompt requires --out")
-            if not os.environ.get("GEMINI_API_KEY"):
-                raise ToolInputException("GEMINI_API_KEY environment variable required "
-                                         "(get one from https://aistudio.google.com/apikey)")
+            ApiKey = kGenAi.RequireKey()
 
             if Args.spec:
                 Jobs = kImageJob.FromSpec(Args.spec, Args.aspect, Args.model)
@@ -245,7 +225,7 @@ class kBatchImageGenApp:
             if kS.ErrorMode:
                 return 1
 
-            Generator = kImageGenerator(os.environ["GEMINI_API_KEY"], Args.quiet)
+            Generator = kImageGenerator(ApiKey, Args.quiet)
             Successes = 0
             for Job in Jobs:
                 if Generator.Generate(Job):

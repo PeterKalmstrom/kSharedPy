@@ -103,7 +103,6 @@ Flags:
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import sys
@@ -111,9 +110,10 @@ import tempfile
 import time
 from pathlib import Path
 
-from _ffmpeg import kDependency, kFfmpeg
 from _transcript import kTranscript
+from kFfmpeg import kDependency, kFfmpeg
 from kGenAi import kGenAi
+from kJsonFile import kJsonFile
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
 
@@ -548,20 +548,6 @@ class kGeminiCuts:
     """The Gemini passes: retake finder, filler trim, and the multimodal retake check."""
 
     @staticmethod
-    def RequireKey(Hint):
-        """A missing GEMINI_API_KEY/GOOGLE_API_KEY is an expected state (exit 2)."""
-        if kS.ErrorMode:
-            return
-        try:
-            if "GEMINI_API_KEY" not in os.environ and "GOOGLE_API_KEY" not in os.environ:
-                raise ToolInputException("GEMINI_API_KEY (or GOOGLE_API_KEY) not set in environment." + Hint)
-        except kToolException:
-            raise
-        except Exception as e:
-            kS.GlobalErrorHandler(e, "kGeminiCuts.RequireKey")
-            return
-
-    @staticmethod
     def TranscriptText(Segments):
         """The transcript as "[start-end] text" lines for the prompts."""
         if kS.ErrorMode:
@@ -642,7 +628,7 @@ class kGeminiCuts:
         if kS.ErrorMode:
             return []
         try:
-            kGeminiCuts.RequireKey("")
+            kGenAi.RequireKey()
             Text = kGeminiCuts.TranscriptText(Segments)
             if not Quiet:
                 print(f"[vedit/propose] gemini filler-trim ({Model}, "
@@ -669,7 +655,7 @@ class kGeminiCuts:
         if kS.ErrorMode:
             return []
         try:
-            kGeminiCuts.RequireKey("\n       Set it in Windows user env vars or pass --no-llm to skip.")
+            kGenAi.RequireKey("\n       Set it in Windows user env vars or pass --no-llm to skip.")
             Text = kGeminiCuts.TranscriptText(Segments)
             if not Quiet:
                 print(f"[vedit/propose] gemini retake-finder ({Model}, "
@@ -1307,10 +1293,9 @@ class kProposeApp:
             # Load the transcript up front (used for both the LLM retake finder and word-snap)
             TranscriptData = None
             if Args.transcript:
-                TranscriptPath = Path(Args.transcript)
-                if not TranscriptPath.exists():
-                    raise ToolInputException(f"transcript not found: {TranscriptPath}")
-                TranscriptData = json.loads(TranscriptPath.read_text(encoding="utf-8"))
+                TranscriptData = kJsonFile.Load(Args.transcript, "transcript")
+                if kS.ErrorMode:
+                    return 1
             StartTime = time.monotonic()
 
             # 1. Pure silence (>= silence_min_s, <= silence_max_s if the cap is set)
@@ -1371,8 +1356,8 @@ class kProposeApp:
             Edl = kCutEditor.BuildEdl(Cuts, Total, str(Input), SpeedSegments=SpeedSegments or None)
             if kS.ErrorMode:
                 return 1
-            Out.parent.mkdir(parents=True, exist_ok=True)
-            Out.write_text(json.dumps(Edl, ensure_ascii=False, indent=2), encoding="utf-8")
+            if not kJsonFile.Save(Out, Edl):
+                return 1
             self.Summarize(Edl, Total, Out, StartTime)
             return 0
         except kToolException:

@@ -52,7 +52,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _ffmpeg import kFfmpeg
+from kFfmpeg import kFfmpeg
+from kJsonFile import kJsonFile
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
 DEFAULT_TOLERANCE = {
@@ -226,8 +227,8 @@ class kAudioCheckApp:
                 "tolerance": Tolerance,
             }
             Out = Path(ProfileOut)
-            Out.parent.mkdir(parents=True, exist_ok=True)
-            Out.write_text(json.dumps(Profile, indent=2), encoding="utf-8")
+            if not kJsonFile.Save(Out, Profile):
+                return 1
             print(f"[vedit/audio_check] calibrated profile → {Out}", file=sys.stderr)
             print(json.dumps(Profile, indent=2))
             return 0
@@ -241,7 +242,9 @@ class kAudioCheckApp:
         if kS.ErrorMode:
             return 1
         try:
-            Profile = json.loads(Path(ProfilePath).read_text(encoding="utf-8"))
+            Profile = kJsonFile.Load(ProfilePath, "profile")
+            if kS.ErrorMode:
+                return 1
             Ok, Rows = kAudioMeter.CheckAgainst(Metrics, Profile)
             if kS.ErrorMode:
                 return 1
@@ -258,6 +261,8 @@ class kAudioCheckApp:
             print("  Re-record with the correct mic, or recalibrate the profile if")
             print("  your setup has genuinely changed.")
             return 1
+        except kToolException:
+            raise
         except Exception as e:
             kS.GlobalErrorHandler(e, f"kAudioCheckApp.Check(profile={ProfilePath})")
             return 1

@@ -40,7 +40,7 @@ GEMINI_API_KEY="..." uvx --with google-genai python batch_video_gen.py \
 | `--resolution` | API default (720p) | `720p` or `1080p` |
 | `--negative-prompt TEXT` | — | Things to keep out of the video |
 | `--image PATH` | — | Starting-frame image (image-to-video) |
-| `--mute` | off | Strip the audio track (needs ffmpeg on PATH) |
+| `--mute` | off | Strip the audio track (needs ffmpeg on PATH, or `uvx --with static-ffmpeg`) |
 | `--quiet` | off | No progress output; errors still go to stderr |
 
 **Exit codes:** 0 all saved; 1 a job was refused by the API (others still ran),

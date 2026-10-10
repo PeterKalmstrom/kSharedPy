@@ -13,6 +13,11 @@
         { "Out": "veo/kShared.py",                  "Parts": [ "kshared/kShared.py" ] },
         { "Out": "veo/send_error_report.py",        "Parts": [ "kshared/send_error_report.py" ] },
         { "Out": "vedit/kShared.py",                "Parts": [ "kshared/kShared.py" ] },
-        { "Out": "vedit/send_error_report.py",      "Parts": [ "kshared/send_error_report.py" ] }
+        { "Out": "vedit/send_error_report.py",      "Parts": [ "kshared/send_error_report.py" ] },
+        { "Out": "gemini/kJsonFile.py",             "Parts": [ "kshared/kJsonFile.py" ] },
+        { "Out": "veo/kJsonFile.py",                "Parts": [ "kshared/kJsonFile.py" ] },
+        { "Out": "vedit/kJsonFile.py",              "Parts": [ "kshared/kJsonFile.py" ] },
+        { "Out": "veo/kFfmpeg.py",                  "Parts": [ "kshared/kFfmpeg.py" ] },
+        { "Out": "vedit/kFfmpeg.py",                "Parts": [ "kshared/kFfmpeg.py" ] }
     ]
 }

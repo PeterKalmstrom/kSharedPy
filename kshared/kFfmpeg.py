@@ -1,9 +1,15 @@
-"""Shared helpers for the vedit scripts: ffmpeg/ffprobe on PATH via the static-ffmpeg package, media probes, and
-the check for an optional Python package.
+"""ffmpeg/ffprobe (from PATH or the static-ffmpeg package), media probes, and the check for an optional package.
 
-Call `kFfmpeg.Ensure()` near the top of any script that shells out to ffmpeg. The first call may take ~30s to
-download ~80MB of static binaries; later calls in the same uv cache are instant.
+MASTER: kSharedPy/kshared/kFfmpeg.py - products and kSharedPy's own folders receive generated copies (kpy).
+
+    kFfmpeg.Ensure()                    # vedit: ffmpeg + ffprobe required; static-ffmpeg puts them on PATH
+    if not kFfmpeg.Find(): ...          # optional use: "" when neither PATH nor static-ffmpeg has ffmpeg
+    kFfmpeg.Run(["-i", In, "-an", "-c:v", "copy", Out])
+    if kDependency.Has("google.genai"): ...
+
+The first static-ffmpeg call may take ~30s to download ~80MB of static binaries; later calls are instant.
 """
+import importlib
 import importlib.util
 import shutil
 import subprocess
@@ -32,7 +38,35 @@ class kDependency:
 
 
 class kFfmpeg:
-    """ffmpeg/ffprobe for the vedit scripts."""
+    """ffmpeg/ffprobe: found on PATH or through static-ffmpeg, plus media probes."""
+
+    @staticmethod
+    def AddStaticPaths():
+        """Put the static-ffmpeg binaries on PATH when that package is installed. True when it was."""
+        if kS.ErrorMode:
+            return False
+        try:
+            if not kDependency.Has("static_ffmpeg"):
+                return False
+            importlib.import_module("static_ffmpeg").add_paths()  # optional package, checked above
+            return True
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kFfmpeg.AddStaticPaths")
+            return False
+
+    @staticmethod
+    def Find():
+        """The path of ffmpeg: from PATH, else from static-ffmpeg when installed; "" when there is none."""
+        if kS.ErrorMode:
+            return ""
+        try:
+            FfmpegPath = shutil.which("ffmpeg")
+            if not FfmpegPath and kFfmpeg.AddStaticPaths():
+                FfmpegPath = shutil.which("ffmpeg")
+            return FfmpegPath or ""
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kFfmpeg.Find")
+            return ""
 
     @staticmethod
     def Ensure():
@@ -43,8 +77,7 @@ class kFfmpeg:
             if not kDependency.Has("static_ffmpeg"):
                 raise ToolInputException("static-ffmpeg not installed. "
                                          "Run via: uvx --with static-ffmpeg python <script>.py ...")
-            from static_ffmpeg import add_paths  # optional package: present only under `uvx --with static-ffmpeg`
-            add_paths()
+            kFfmpeg.AddStaticPaths()
             FfmpegPath = shutil.which("ffmpeg")
             FfprobePath = shutil.which("ffprobe")
             if not FfmpegPath or not FfprobePath:
@@ -55,6 +88,19 @@ class kFfmpeg:
         except Exception as e:
             kS.GlobalErrorHandler(e, "kFfmpeg.Ensure")
             return ("", "")
+
+    @staticmethod
+    def Run(Args):
+        """Run ffmpeg quietly (-loglevel error -y) with Args; a failing ffmpeg is reported (unexpected). True on
+        success."""
+        if kS.ErrorMode:
+            return False
+        try:
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y"] + [str(Arg) for Arg in Args], check=True)
+            return True
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kFfmpeg.Run")
+            return False
 
     @staticmethod
     def ProbeDurationSeconds(Path):

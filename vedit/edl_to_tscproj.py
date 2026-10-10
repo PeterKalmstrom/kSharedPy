@@ -37,11 +37,11 @@ Flags:
 
 import argparse
 import copy
-import json
 import os
 import sys
 from pathlib import Path
 
+from kJsonFile import kJsonFile
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
 EDIT_RATE = 705_600_000  # Camtasia project ticks per second
@@ -293,11 +293,10 @@ class kEdlToTscprojApp:
             if kS.ErrorMode:
                 return 1
             SourceBundleDir = TscprojFile.parent
-            EdlPath = Path(Args.edl)
-            if not EdlPath.exists():
-                raise ToolInputException(f"EDL not found: {EdlPath}")
-            Edl = json.loads(EdlPath.read_text(encoding="utf-8"))
-            Project = json.loads(TscprojFile.read_text(encoding="utf-8"))
+            Edl = kJsonFile.Load(Args.edl, "EDL")
+            Project = kJsonFile.Load(TscprojFile, "project")
+            if kS.ErrorMode:
+                return 1
             KeepSegments = [Segment for Segment in Edl["segments"] if Segment["keep"]]
             if not KeepSegments:
                 raise ToolReportableException("no keep segments in EDL")
@@ -328,7 +327,8 @@ class kEdlToTscprojApp:
                                                         Args.quiet)
             if kS.ErrorMode:
                 return 1
-            OutJson.write_text(json.dumps(Project, indent=2, ensure_ascii=False), encoding="utf-8")
+            if not kJsonFile.Save(OutJson, Project):
+                return 1
             if not Args.quiet:
                 print(f"[vedit/edl_to_tscproj] wrote {OutJson}", file=sys.stderr)
             return 0

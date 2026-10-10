@@ -38,14 +38,14 @@ Flags:
 """
 
 import argparse
-import json
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 
-from _ffmpeg import kFfmpeg
+from kFfmpeg import kFfmpeg
+from kJsonFile import kJsonFile
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
 
@@ -58,7 +58,9 @@ class kEdlCutter:
         if kS.ErrorMode:
             return ("", 0.0, [])
         try:
-            Data = json.loads(EdlPath.read_text(encoding="utf-8"))
+            Data = kJsonFile.Load(EdlPath, "EDL")
+            if kS.ErrorMode:
+                return ("", 0.0, [])
             Segments = Data["segments"]
             for Index, Segment in enumerate(Segments):
                 if Segment["end"] <= Segment["start"]:

@@ -34,14 +34,13 @@ Flags:
 """
 
 import argparse
-import json
-import os
 import re
 import sys
 from pathlib import Path
 
-from _ffmpeg import kDependency
+from kFfmpeg import kDependency
 from kGenAi import kGenAi
+from kJsonFile import kJsonFile
 from kShared import ToolInputException, kRun, kS, kToolException
 
 
@@ -143,7 +142,7 @@ class kCuePolisher:
         try:
             if not Cues:
                 return Cues
-            if "GEMINI_API_KEY" not in os.environ and "GOOGLE_API_KEY" not in os.environ:
+            if not kGenAi.HasKey():
                 sys.stderr.write(
                     "[vedit/subtitles] WARNING: GEMINI_API_KEY not set; skipping polish "
                     "(raw transcript will be used). Pass --no-polish to suppress this warning.\n"
@@ -322,9 +321,14 @@ class kSubtitlesApp:
             if Format not in ("srt", "vtt"):  # checked before the paid polish call, not after it
                 raise ToolInputException(f"unsupported format '{Format}' "
                                          f"(use --format srt|vtt or .srt/.vtt extension)")
-            Segments = json.loads(TranscriptPath.read_text(encoding="utf-8"))["segments"]
+            Transcript = kJsonFile.Load(TranscriptPath, "transcript")
+            if kS.ErrorMode:
+                return 1
+            Segments = Transcript["segments"]
             if EdlPath is not None:
-                Edl = json.loads(EdlPath.read_text(encoding="utf-8"))
+                Edl = kJsonFile.Load(EdlPath, "EDL")
+                if kS.ErrorMode:
+                    return 1
                 KeepRanges = [(float(Segment["start"]), float(Segment["end"]))
                               for Segment in Edl["segments"] if Segment["keep"]]
                 Segments = kCutTimeline.Remap(Segments, KeepRanges)
