@@ -32,210 +32,229 @@ Flags:
                        cut. Default: 3.0.
     --max-line LEN     Wrap transcript lines longer than this. Default: 100.
 """
-
-from __future__ import annotations
-
 import argparse
-import io
 import json
 import sys
 from pathlib import Path
 
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
+from _transcript import kTranscript
+from kShared import ToolInputException, kRun, kS, kToolException
 
 
-def overlapping(transcript_segs: list[dict], a: float, b: float) -> list[dict]:
-    """Transcript segments that overlap [a, b] at all."""
-    return [s for s in transcript_segs if s["end"] > a and s["start"] < b]
+class kEdlReview:
+    """Markdown review of an EDL's cuts with transcript context, and the restore of one cut class."""
+
+    @staticmethod
+    def FormatTime(Seconds):
+        """Seconds as MM:SS.ss."""
+        if kS.ErrorMode:
+            return ""
+        try:
+            Minutes, Rest = divmod(Seconds, 60)
+            return f"{int(Minutes):02d}:{Rest:05.2f}"
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kEdlReview.FormatTime")
+            return ""
+
+    @staticmethod
+    def Categorize(Reason):
+        """The cut class of a reason text: retake, filler, static, silence or other."""
+        if kS.ErrorMode:
+            return "other"
+        try:
+            if "retake" in Reason:
+                return "retake"
+            if "filler" in Reason:
+                return "filler"
+            if "static" in Reason:
+                return "static"
+            if "silence" in Reason:
+                return "silence"
+            return "other"
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kEdlReview.Categorize")
+            return "other"
+
+    @staticmethod
+    def CountSortKey(Item):
+        """Sort key for (category, count) pairs: the largest count first."""
+        if kS.ErrorMode:
+            return 0
+        try:
+            return -Item[1]
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kEdlReview.CountSortKey")
+            return 0
+
+    @staticmethod
+    def Render(Edl, Transcript, Only, ContextSeconds, MaxLine):
+        """The markdown review."""
+        if kS.ErrorMode:
+            return ""
+        try:
+            Segments = Edl["segments"]
+            Cuts = [Segment for Segment in Segments if not Segment["keep"]]
+            Keeps = [Segment for Segment in Segments if Segment["keep"]]
+            Total = float(Edl["duration_s"])
+            CutDuration = sum(Segment["end"] - Segment["start"] for Segment in Cuts)
+            KeepDuration = sum(Segment["end"] - Segment["start"] for Segment in Keeps)
+            ByCategory = {}
+            for Cut in Cuts:
+                Category = kEdlReview.Categorize(Cut["reason"])
+                ByCategory[Category] = ByCategory.get(Category, 0) + 1
+            Out = []
+            Out.append(f"# EDL review: {Path(Edl['source']).name}")
+            Out.append("")
+            Out.append(f"- **Source:** `{Edl['source']}`")
+            Out.append(f"- **Duration:** {kEdlReview.FormatTime(Total)} → {kEdlReview.FormatTime(KeepDuration)} "
+                       f"(cut {CutDuration:.1f}s, {100 * CutDuration / Total:.1f}%)")
+            Out.append(f"- **{len(Cuts)} cuts** by category: " +
+                       ", ".join(f"{Count} {Name}" for Name, Count
+                                 in sorted(ByCategory.items(), key=kEdlReview.CountSortKey)))
+            if Only:
+                Out.append(f"- **Filtered to:** `{Only}` only")
+            Out.append("")
+            TranscriptSegments = Transcript["segments"]
+            Shown = 0
+            for Number, Cut in enumerate(Cuts, 1):
+                Category = kEdlReview.Categorize(Cut["reason"])
+                if Only and Only not in Category:
+                    continue
+                Shown += 1
+                Start, End = Cut["start"], Cut["end"]
+                CutText = kTranscript.WordsInside(TranscriptSegments, Start, End)
+                # "before" = segments that end at or before cut start (no overlap with cut)
+                Before = [Segment for Segment in TranscriptSegments
+                          if Segment["end"] <= Start + 0.05 and Segment["end"] > Start - ContextSeconds]
+                # "after"  = segments that start at or after cut end (no overlap with cut)
+                After = [Segment for Segment in TranscriptSegments
+                         if Segment["start"] >= End - 0.05 and Segment["start"] < End + ContextSeconds]
+                Out.append(f"## Cut #{Number} — {kEdlReview.FormatTime(Start)} → {kEdlReview.FormatTime(End)} "
+                           f"({End-Start:.1f}s)")
+                Out.append(f"**Reason:** {Cut['reason']}")
+                Out.append("")
+                Out.append("```")
+                for Segment in Before[-3:]:
+                    Out.append(f"  [{Segment['start']:6.1f}] {Segment['text']}"[:MaxLine])
+                if CutText:
+                    Out.append(f"✂ [{Start:6.1f}] {CutText}    ← CUT"[:MaxLine])
+                else:
+                    Out.append(f"✂ [{Start:6.1f}] (silence — no transcript)    ← CUT ({End-Start:.1f}s)")
+                for Segment in After[:3]:
+                    Out.append(f"  [{Segment['start']:6.1f}] {Segment['text']}"[:MaxLine])
+                Out.append("```")
+                Out.append("")
+            if Only and Shown == 0:
+                Out.append(f"*(no cuts matched filter `{Only}`)*")
+            Out.append("---")
+            Out.append("")
+            Out.append("To restore a cut, edit the EDL JSON and flip its `keep` from `false` to `true`.")
+            Out.append("Then re-run `apply.py`. The EDL is the source of truth — `review.py` is read-only.")
+            return "\n".join(Out) + "\n"
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kEdlReview.Render")
+            return ""
+
+    @staticmethod
+    def Restore(Edl, Category):
+        """Return (new_edl, restored_count) with cuts whose reason contains Category flipped to keep:true.
+        Adjacent kept segments are then merged so the EDL stays clean."""
+        if kS.ErrorMode:
+            return (None, 0)
+        try:
+            Restored = 0
+            Flipped = []
+            for Segment in Edl["segments"]:
+                if not Segment["keep"] and Category in kEdlReview.Categorize(Segment["reason"]):
+                    Flipped.append({**Segment, "keep": True, "reason": f"restored from: {Segment['reason']}"})
+                    Restored += 1
+                else:
+                    Flipped.append(dict(Segment))
+            Merged = []
+            for Segment in Flipped:
+                if Merged and Merged[-1]["keep"] and Segment["keep"]:
+                    Merged[-1] = {
+                        "start": Merged[-1]["start"],
+                        "end": Segment["end"],
+                        "keep": True,
+                        "reason": "" if not Merged[-1].get("reason") and not Segment.get("reason") else
+                                  (Merged[-1].get("reason", "") or Segment.get("reason", "")),
+                    }
+                else:
+                    Merged.append(Segment)
+            return ({**Edl, "segments": Merged}, Restored)
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kEdlReview.Restore(category={Category})")
+            return (None, 0)
 
 
-def words_inside(transcript_segs: list[dict], a: float, b: float) -> str:
-    """Extract just the words whose midpoints fall within [a, b].
+class kReviewApp:
+    """Command line."""
 
-    Uses word-level timestamps when available; falls back to whole-segment
-    text for segments that overlap the cut span.
-    """
-    words: list[str] = []
-    saw_words = False
-    for s in transcript_segs:
-        if s["end"] <= a or s["start"] >= b:
-            continue
-        if s.get("words"):
-            saw_words = True
-            for w in s["words"]:
-                mid = (w["start"] + w["end"]) / 2
-                if a <= mid <= b:
-                    words.append(w["word"])
-    if saw_words:
-        return "".join(words).strip()
-    # Fallback: concat overlapping segment texts
-    return " ".join(s["text"] for s in overlapping(transcript_segs, a, b)).strip()
+    @staticmethod
+    def WriteOrPrint(OutPath, Text):
+        """Write Text to OutPath (creating its folder); without a path print it. True when written to a file."""
+        if kS.ErrorMode:
+            return False
+        try:
+            if OutPath:
+                Path(OutPath).parent.mkdir(parents=True, exist_ok=True)
+                Path(OutPath).write_text(Text, encoding="utf-8")
+                return True
+            sys.stdout.write(Text)
+            return False
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kReviewApp.WriteOrPrint(file={OutPath})")
+            return False
 
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
+        try:
+            Parser = argparse.ArgumentParser(description="Review or restore-cuts on an EDL.")
+            Parser.add_argument("--edl", required=True)
+            Parser.add_argument("--transcript", default=None,
+                                help="Transcript JSON path. Required for review mode.")
+            Parser.add_argument("--out", default=None)
+            Parser.add_argument("--only", default=None,
+                                help="(review) Filter to category: retake | silence | static")
+            Parser.add_argument("--restore", default=None,
+                                help="(restore) Flip cuts in CATEGORY to keep:true, write new EDL.")
+            Parser.add_argument("--context-s", type=float, default=3.0)
+            Parser.add_argument("--max-line", type=int, default=100)
+            Args = Parser.parse_args()
 
-def fmt_time(t: float) -> str:
-    m, s = divmod(t, 60)
-    return f"{int(m):02d}:{s:05.2f}"
+            EdlPath = Path(Args.edl)
+            if not EdlPath.exists():
+                raise ToolInputException(f"EDL not found: {EdlPath}")
+            Edl = json.loads(EdlPath.read_text(encoding="utf-8"))
 
+            if Args.restore:
+                NewEdl, Restored = kEdlReview.Restore(Edl, Args.restore)
+                if kS.ErrorMode:
+                    return 1
+                if kReviewApp.WriteOrPrint(Args.out, json.dumps(NewEdl, ensure_ascii=False, indent=2)):
+                    sys.stderr.write(f"[vedit/review] restored {Restored} '{Args.restore}' cuts → {Args.out}\n")
+                return 0
 
-def categorize(reason: str) -> str:
-    if "retake" in reason:
-        return "retake"
-    if "filler" in reason:
-        return "filler"
-    if "static" in reason:
-        return "static"
-    if "silence" in reason:
-        return "silence"
-    return "other"
-
-
-def render(edl: dict, transcript: dict, only: str | None, context_s: float, max_line: int) -> str:
-    segs = edl["segments"]
-    cuts = [s for s in segs if not s["keep"]]
-    keeps = [s for s in segs if s["keep"]]
-    total = float(edl["duration_s"])
-    cut_dur = sum(s["end"] - s["start"] for s in cuts)
-    keep_dur = sum(s["end"] - s["start"] for s in keeps)
-
-    by_cat: dict[str, int] = {}
-    for c in cuts:
-        by_cat[categorize(c["reason"])] = by_cat.get(categorize(c["reason"]), 0) + 1
-
-    out: list[str] = []
-    out.append(f"# EDL review: {Path(edl['source']).name}")
-    out.append("")
-    out.append(f"- **Source:** `{edl['source']}`")
-    out.append(f"- **Duration:** {fmt_time(total)} → {fmt_time(keep_dur)} "
-               f"(cut {cut_dur:.1f}s, {100 * cut_dur / total:.1f}%)")
-    out.append(f"- **{len(cuts)} cuts** by category: " +
-               ", ".join(f"{n} {k}" for k, n in sorted(by_cat.items(), key=lambda x: -x[1])))
-    if only:
-        out.append(f"- **Filtered to:** `{only}` only")
-    out.append("")
-
-    tsegs = transcript["segments"]
-    shown = 0
-    for i, c in enumerate(cuts, 1):
-        cat = categorize(c["reason"])
-        if only and only not in cat:
-            continue
-        shown += 1
-        a, b = c["start"], c["end"]
-        cut_text = words_inside(tsegs, a, b)
-        # "before" = segments that end at or before cut start (no overlap with cut)
-        before = [s for s in tsegs if s["end"] <= a + 0.05 and s["end"] > a - context_s]
-        # "after"  = segments that start at or after cut end (no overlap with cut)
-        after = [s for s in tsegs if s["start"] >= b - 0.05 and s["start"] < b + context_s]
-
-        out.append(f"## Cut #{i} — {fmt_time(a)} → {fmt_time(b)} ({b-a:.1f}s)")
-        out.append(f"**Reason:** {c['reason']}")
-        out.append("")
-        out.append("```")
-        for s in before[-3:]:
-            line = f"  [{s['start']:6.1f}] {s['text']}"
-            out.append(line[:max_line])
-        if cut_text:
-            line = f"✂ [{a:6.1f}] {cut_text}    ← CUT"
-            out.append(line[:max_line])
-        else:
-            out.append(f"✂ [{a:6.1f}] (silence — no transcript)    ← CUT ({b-a:.1f}s)")
-        for s in after[:3]:
-            line = f"  [{s['start']:6.1f}] {s['text']}"
-            out.append(line[:max_line])
-        out.append("```")
-        out.append("")
-
-    if only and shown == 0:
-        out.append(f"*(no cuts matched filter `{only}`)*")
-    out.append("---")
-    out.append("")
-    out.append("To restore a cut, edit the EDL JSON and flip its `keep` from `false` to `true`.")
-    out.append("Then re-run `apply.py`. The EDL is the source of truth — `review.py` is read-only.")
-    return "\n".join(out) + "\n"
-
-
-def restore(edl: dict, category: str) -> tuple[dict, int]:
-    """Return (new_edl, n_restored) with cuts whose reason contains CATEGORY
-    flipped to keep:true. Adjacent kept segments are then merged so the
-    EDL stays clean."""
-    n = 0
-    flipped: list[dict] = []
-    for s in edl["segments"]:
-        if not s["keep"] and category in categorize(s["reason"]):
-            flipped.append({**s, "keep": True, "reason": f"restored from: {s['reason']}"})
-            n += 1
-        else:
-            flipped.append(dict(s))
-
-    # Merge adjacent kept segments
-    merged: list[dict] = []
-    for s in flipped:
-        if merged and merged[-1]["keep"] and s["keep"]:
-            merged[-1] = {
-                "start": merged[-1]["start"],
-                "end": s["end"],
-                "keep": True,
-                "reason": "" if not merged[-1].get("reason") and not s.get("reason") else
-                          (merged[-1].get("reason", "") or s.get("reason", "")),
-            }
-        else:
-            merged.append(s)
-
-    new_edl = {**edl, "segments": merged}
-    return new_edl, n
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Review or restore-cuts on an EDL.")
-    ap.add_argument("--edl", required=True)
-    ap.add_argument("--transcript", default=None,
-                    help="Transcript JSON path. Required for review mode.")
-    ap.add_argument("--out", default=None)
-    ap.add_argument("--only", default=None,
-                    help="(review) Filter to category: retake | silence | static")
-    ap.add_argument("--restore", default=None,
-                    help="(restore) Flip cuts in CATEGORY to keep:true, write new EDL.")
-    ap.add_argument("--context-s", type=float, default=3.0)
-    ap.add_argument("--max-line", type=int, default=100)
-    args = ap.parse_args()
-
-    edl_path = Path(args.edl)
-    if not edl_path.exists():
-        sys.stderr.write(f"ERROR: EDL not found: {edl_path}\n"); return 2
-    edl = json.loads(edl_path.read_text(encoding="utf-8"))
-
-    if args.restore:
-        new_edl, n = restore(edl, args.restore)
-        out_text = json.dumps(new_edl, ensure_ascii=False, indent=2)
-        if args.out:
-            Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-            Path(args.out).write_text(out_text, encoding="utf-8")
-            sys.stderr.write(
-                f"[vedit/review] restored {n} '{args.restore}' cuts → {args.out}\n"
-            )
-        else:
-            sys.stdout.write(out_text)
-        return 0
-
-    # Review mode
-    if not args.transcript:
-        sys.stderr.write("ERROR: --transcript required for review mode\n"); return 2
-    tpath = Path(args.transcript)
-    if not tpath.exists():
-        sys.stderr.write(f"ERROR: transcript not found: {tpath}\n"); return 2
-    transcript = json.loads(tpath.read_text(encoding="utf-8"))
-
-    md = render(edl, transcript, args.only, args.context_s, args.max_line)
-    if args.out:
-        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.out).write_text(md, encoding="utf-8")
-        sys.stderr.write(f"[vedit/review] wrote {args.out}\n")
-    else:
-        sys.stdout.write(md)
-    return 0
+            if not Args.transcript:
+                raise ToolInputException("--transcript required for review mode")
+            TranscriptPath = Path(Args.transcript)
+            if not TranscriptPath.exists():
+                raise ToolInputException(f"transcript not found: {TranscriptPath}")
+            Transcript = json.loads(TranscriptPath.read_text(encoding="utf-8"))
+            Markdown = kEdlReview.Render(Edl, Transcript, Args.only, Args.context_s, Args.max_line)
+            if kS.ErrorMode:
+                return 1
+            if kReviewApp.WriteOrPrint(Args.out, Markdown):
+                sys.stderr.write(f"[vedit/review] wrote {Args.out}\n")
+            return 0
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kReviewApp.Run")
+            return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    kRun.Main(kReviewApp)

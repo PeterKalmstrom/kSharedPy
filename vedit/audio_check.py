@@ -45,96 +45,17 @@ Flags:
     --quiet             Suppress per-metric pass/fail rows on success.
 """
 
-from __future__ import annotations
-
 import argparse
-import io
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
+from _ffmpeg import kFfmpeg
+from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
-
-# ---------- ffmpeg probes ---------------------------------------------------
-
-def probe_volume(inp: Path, audio_stream: int) -> dict[str, float]:
-    """Run ffmpeg volumedetect, parse mean/max volume from stderr."""
-    proc = subprocess.run(
-        ["ffmpeg", "-nostdin", "-hide_banner",
-         "-i", str(inp),
-         "-map", f"0:a:{audio_stream}",
-         "-af", "volumedetect",
-         "-f", "null", "-"],
-        capture_output=True, text=True,
-    )
-    if proc.returncode != 0:
-        sys.stderr.write(proc.stderr[-2000:])
-        raise RuntimeError("volumedetect failed")
-
-    mean = re.search(r"mean_volume:\s*(-?[\d.]+)\s*dB", proc.stderr)
-    peak = re.search(r"max_volume:\s*(-?[\d.]+)\s*dB", proc.stderr)
-    if not mean or not peak:
-        raise RuntimeError("could not parse volumedetect output")
-    return {
-        "mean_volume_db": float(mean.group(1)),
-        "max_volume_db":  float(peak.group(1)),
-    }
-
-
-def probe_ebur128(inp: Path, audio_stream: int) -> dict[str, float]:
-    """Run ffmpeg ebur128, parse integrated loudness / LRA / true peak."""
-    proc = subprocess.run(
-        ["ffmpeg", "-nostdin", "-hide_banner",
-         "-i", str(inp),
-         "-map", f"0:a:{audio_stream}",
-         "-af", "ebur128=peak=true",
-         "-f", "null", "-"],
-        capture_output=True, text=True,
-    )
-    if proc.returncode != 0:
-        sys.stderr.write(proc.stderr[-2000:])
-        raise RuntimeError("ebur128 failed")
-
-    # Parse the Summary block at the end of stderr
-    text = proc.stderr
-    summary_idx = text.rfind("Summary:")
-    if summary_idx < 0:
-        raise RuntimeError("could not find ebur128 Summary in output")
-    summary = text[summary_idx:]
-
-    integrated = re.search(r"I:\s*(-?[\d.]+|-inf)\s*LUFS", summary)
-    lra = re.search(r"LRA:\s*([\d.]+)\s*LU\b", summary)
-    peak = re.search(r"Peak:\s*(-?[\d.]+|-inf)\s*dBFS", summary)
-    if not integrated or not lra or not peak:
-        raise RuntimeError(
-            f"could not parse ebur128 Summary fields:\n{summary[:800]}"
-        )
-
-    def f(s: str) -> float:
-        return float("-inf") if s == "-inf" else float(s)
-
-    return {
-        "integrated_lufs":   f(integrated.group(1)),
-        "loudness_range_lu": float(lra.group(1)),
-        "true_peak_db":      f(peak.group(1)),
-    }
-
-
-def measure(inp: Path, audio_stream: int) -> dict[str, float]:
-    m: dict[str, float] = {}
-    m.update(probe_volume(inp, audio_stream))
-    m.update(probe_ebur128(inp, audio_stream))
-    return m
-
-
-# ---------- check against profile -------------------------------------------
-
-DEFAULT_TOLERANCE: dict[str, float] = {
+DEFAULT_TOLERANCE = {
     "mean_volume_db":   2.0,
     "max_volume_db":    3.0,
     "integrated_lufs":  2.0,
@@ -146,109 +67,248 @@ DEFAULT_TOLERANCE: dict[str, float] = {
 NEVER_NEG_INF = {"mean_volume_db", "max_volume_db", "integrated_lufs", "true_peak_db"}
 
 
-def check_against(metrics: dict[str, float], profile: dict) -> tuple[bool, list[str]]:
-    baseline = profile.get("baseline", {})
-    tol = {**DEFAULT_TOLERANCE, **profile.get("tolerance", {})}
-    failures: list[str] = []
-    rows: list[str] = []
-    for k, want in baseline.items():
-        got = metrics.get(k)
-        if got is None:
-            failures.append(f"missing metric: {k}")
-            continue
-        if got == float("-inf") and k in NEVER_NEG_INF:
-            failures.append(f"{k}: silent/-inf (no usable audio)")
-            rows.append(f"  {k:20} want {want:>7.2f}  got -inf       FAIL")
-            continue
-        delta = got - want
-        t = tol.get(k, 2.0)
-        ok = abs(delta) <= t
-        marker = "OK  " if ok else "FAIL"
-        rows.append(f"  {k:20} want {want:>7.2f}  got {got:>7.2f}  Δ {delta:+6.2f}  (±{t})  {marker}")
-        if not ok:
-            failures.append(f"{k}: Δ={delta:+.2f} dB exceeds tolerance ±{t}")
-    return (not failures, rows)
+class kAudioMeter:
+    """ffmpeg loudness probes of one audio stream."""
+
+    @staticmethod
+    def RunFilter(Input, AudioStream, Filter, Name):
+        """Run ffmpeg with an analysis filter and return its stderr. ffmpeg refusing the stream (no such audio
+        stream, unreadable file) is an expected state: its output is shown and the tool stops (exit 1)."""
+        if kS.ErrorMode:
+            return ""
+        try:
+            Process = subprocess.run(
+                ["ffmpeg", "-nostdin", "-hide_banner",
+                 "-i", str(Input),
+                 "-map", f"0:a:{AudioStream}",
+                 "-af", Filter,
+                 "-f", "null", "-"],
+                capture_output=True, text=True,
+            )
+            if Process.returncode != 0:
+                sys.stderr.write(Process.stderr[-2000:])
+                raise ToolReportableException(f"{Name} failed")
+            return Process.stderr
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kAudioMeter.RunFilter(file={Input}, filter={Name})")
+            return ""
+
+    @staticmethod
+    def ProbeVolume(Input, AudioStream):
+        """Run ffmpeg volumedetect, parse mean/max volume from stderr."""
+        if kS.ErrorMode:
+            return {}
+        try:
+            Output = kAudioMeter.RunFilter(Input, AudioStream, "volumedetect", "volumedetect")
+            if kS.ErrorMode:
+                return {}
+            Mean = re.search(r"mean_volume:\s*(-?[\d.]+)\s*dB", Output)
+            Peak = re.search(r"max_volume:\s*(-?[\d.]+)\s*dB", Output)
+            if not Mean or not Peak:
+                raise RuntimeError("could not parse volumedetect output")
+            return {
+                "mean_volume_db": float(Mean.group(1)),
+                "max_volume_db":  float(Peak.group(1)),
+            }
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kAudioMeter.ProbeVolume(file={Input})")
+            return {}
+
+    @staticmethod
+    def ToFloat(Text):
+        """A parsed level as a float; "-inf" is minus infinity."""
+        if kS.ErrorMode:
+            return 0.0
+        try:
+            return float("-inf") if Text == "-inf" else float(Text)
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kAudioMeter.ToFloat")
+            return 0.0
+
+    @staticmethod
+    def ProbeEbur128(Input, AudioStream):
+        """Run ffmpeg ebur128, parse integrated loudness / LRA / true peak."""
+        if kS.ErrorMode:
+            return {}
+        try:
+            Text = kAudioMeter.RunFilter(Input, AudioStream, "ebur128=peak=true", "ebur128")
+            if kS.ErrorMode:
+                return {}
+            # Parse the Summary block at the end of stderr
+            SummaryIndex = Text.rfind("Summary:")
+            if SummaryIndex < 0:
+                raise RuntimeError("could not find ebur128 Summary in output")
+            Summary = Text[SummaryIndex:]
+            Integrated = re.search(r"I:\s*(-?[\d.]+|-inf)\s*LUFS", Summary)
+            Range = re.search(r"LRA:\s*([\d.]+)\s*LU\b", Summary)
+            Peak = re.search(r"Peak:\s*(-?[\d.]+|-inf)\s*dBFS", Summary)
+            if not Integrated or not Range or not Peak:
+                raise RuntimeError(f"could not parse ebur128 Summary fields:\n{Summary[:800]}")
+            return {
+                "integrated_lufs":   kAudioMeter.ToFloat(Integrated.group(1)),
+                "loudness_range_lu": float(Range.group(1)),
+                "true_peak_db":      kAudioMeter.ToFloat(Peak.group(1)),
+            }
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kAudioMeter.ProbeEbur128(file={Input})")
+            return {}
+
+    @staticmethod
+    def Measure(Input, AudioStream):
+        """All five metrics of one audio stream."""
+        if kS.ErrorMode:
+            return {}
+        try:
+            Metrics = {}
+            Metrics.update(kAudioMeter.ProbeVolume(Input, AudioStream))
+            Metrics.update(kAudioMeter.ProbeEbur128(Input, AudioStream))
+            return Metrics
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kAudioMeter.Measure(file={Input})")
+            return {}
+
+    @staticmethod
+    def CheckAgainst(Metrics, Profile):
+        """Return (passed, report_rows) for the metrics against a calibrated profile."""
+        if kS.ErrorMode:
+            return (False, [])
+        try:
+            Baseline = Profile.get("baseline", {})
+            Tolerance = {**DEFAULT_TOLERANCE, **Profile.get("tolerance", {})}
+            Failures = []
+            Rows = []
+            for Key, Want in Baseline.items():
+                Got = Metrics.get(Key)
+                if Got is None:
+                    Failures.append(f"missing metric: {Key}")
+                    continue
+                if Got == float("-inf") and Key in NEVER_NEG_INF:
+                    Failures.append(f"{Key}: silent/-inf (no usable audio)")
+                    Rows.append(f"  {Key:20} want {Want:>7.2f}  got -inf       FAIL")
+                    continue
+                Delta = Got - Want
+                Allowed = Tolerance.get(Key, 2.0)
+                Ok = abs(Delta) <= Allowed
+                Marker = "OK  " if Ok else "FAIL"
+                Rows.append(f"  {Key:20} want {Want:>7.2f}  got {Got:>7.2f}  Δ {Delta:+6.2f}  (±{Allowed})  {Marker}")
+                if not Ok:
+                    Failures.append(f"{Key}: Δ={Delta:+.2f} dB exceeds tolerance ±{Allowed}")
+            return (not Failures, Rows)
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kAudioMeter.CheckAgainst")
+            return (False, [])
 
 
-# ---------- main ------------------------------------------------------------
+class kAudioCheckApp:
+    """Command line."""
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Audio quality gate for vedit pipeline.")
-    ap.add_argument("--in", dest="inp", required=True)
-    ap.add_argument("--audio-stream", type=int, default=0)
-    ap.add_argument("--calibrate", action="store_true")
-    ap.add_argument("--profile-out", default=None,
-                    help="Where to write the profile (calibrate mode).")
-    ap.add_argument("--profile", default=None,
-                    help="Profile JSON to check against (default mode).")
-    ap.add_argument("--tolerance-db", type=float, default=None,
-                    help="Override all tolerances (calibrate mode writes this into profile).")
-    ap.add_argument("--quiet", action="store_true")
-    args = ap.parse_args()
-
-    inp = Path(args.inp)
-    if not inp.exists():
-        sys.stderr.write(f"ERROR: input not found: {inp}\n"); return 2
-
-    try:
-        from _ffmpeg import ensure_ffmpeg
-    except ImportError:
-        sys.path.insert(0, str(Path(__file__).parent))
-        from _ffmpeg import ensure_ffmpeg
-    ensure_ffmpeg()
-
-    if not args.quiet:
-        print(f"[vedit/audio_check] measuring {inp.name} (stream a:{args.audio_stream})…",
-              file=sys.stderr)
-    metrics = measure(inp, args.audio_stream)
-
-    if args.calibrate:
-        if not args.profile_out:
-            sys.stderr.write("ERROR: --profile-out required in calibrate mode\n"); return 2
-        tol = DEFAULT_TOLERANCE.copy()
-        if args.tolerance_db is not None:
-            tol = {k: args.tolerance_db for k in tol}
-        profile = {
-            "version": 1,
-            "calibrated_from": str(inp),
-            "baseline": {k: round(v, 3) for k, v in metrics.items()},
-            "tolerance": tol,
-        }
-        out = Path(args.profile_out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(profile, indent=2), encoding="utf-8")
-        print(f"[vedit/audio_check] calibrated profile → {out}", file=sys.stderr)
-        print(json.dumps(profile, indent=2))
-        return 0
-
-    # Default mode: probe + optionally check
-    print(f"Measured audio (a:{args.audio_stream}):")
-    for k, v in metrics.items():
-        vstr = "-inf" if v == float("-inf") else f"{v:.2f}"
-        print(f"  {k:20} {vstr}")
-
-    if args.profile:
-        pp = Path(args.profile)
-        if not pp.exists():
-            sys.stderr.write(f"ERROR: profile not found: {pp}\n"); return 2
-        profile = json.loads(pp.read_text(encoding="utf-8"))
-        ok, rows = check_against(metrics, profile)
-        print()
-        print(f"Profile: {profile.get('calibrated_from', '?')}")
-        print("Comparison:")
-        for r in rows:
-            print(r)
-        print()
-        if ok:
-            print("PASS — audio quality within tolerance.")
+    @staticmethod
+    def Calibrate(Input, Metrics, ToleranceDb, ProfileOut):
+        """Write the profile built from Metrics to ProfileOut and print it."""
+        if kS.ErrorMode:
+            return 1
+        try:
+            Tolerance = DEFAULT_TOLERANCE.copy()
+            if ToleranceDb is not None:
+                Tolerance = {Key: ToleranceDb for Key in Tolerance}
+            Profile = {
+                "version": 1,
+                "calibrated_from": str(Input),
+                "baseline": {Key: round(Value, 3) for Key, Value in Metrics.items()},
+                "tolerance": Tolerance,
+            }
+            Out = Path(ProfileOut)
+            Out.parent.mkdir(parents=True, exist_ok=True)
+            Out.write_text(json.dumps(Profile, indent=2), encoding="utf-8")
+            print(f"[vedit/audio_check] calibrated profile → {Out}", file=sys.stderr)
+            print(json.dumps(Profile, indent=2))
             return 0
-        else:
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kAudioCheckApp.Calibrate(file={ProfileOut})")
+            return 1
+
+    @staticmethod
+    def Check(Metrics, ProfilePath):
+        """Print the comparison with the profile: 0 PASS, 1 FAIL."""
+        if kS.ErrorMode:
+            return 1
+        try:
+            Profile = json.loads(Path(ProfilePath).read_text(encoding="utf-8"))
+            Ok, Rows = kAudioMeter.CheckAgainst(Metrics, Profile)
+            if kS.ErrorMode:
+                return 1
+            print()
+            print(f"Profile: {Profile.get('calibrated_from', '?')}")
+            print("Comparison:")
+            for Row in Rows:
+                print(Row)
+            print()
+            if Ok:
+                print("PASS — audio quality within tolerance.")
+                return 0
             print("FAIL — audio quality outside tolerance. Refuse to process.")
             print("  Re-record with the correct mic, or recalibrate the profile if")
             print("  your setup has genuinely changed.")
             return 1
-    return 0
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kAudioCheckApp.Check(profile={ProfilePath})")
+            return 1
+
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
+        try:
+            Parser = argparse.ArgumentParser(description="Audio quality gate for vedit pipeline.")
+            Parser.add_argument("--in", dest="inp", required=True)
+            Parser.add_argument("--audio-stream", type=int, default=0)
+            Parser.add_argument("--calibrate", action="store_true")
+            Parser.add_argument("--profile-out", default=None,
+                                help="Where to write the profile (calibrate mode).")
+            Parser.add_argument("--profile", default=None,
+                                help="Profile JSON to check against (default mode).")
+            Parser.add_argument("--tolerance-db", type=float, default=None,
+                                help="Override all tolerances (calibrate mode writes this into profile).")
+            Parser.add_argument("--quiet", action="store_true")
+            Args = Parser.parse_args()
+
+            Input = Path(Args.inp)
+            if not Input.exists():
+                raise ToolInputException(f"input not found: {Input}")
+            kFfmpeg.Ensure()
+            if not Args.quiet:
+                print(f"[vedit/audio_check] measuring {Input.name} (stream a:{Args.audio_stream})…",
+                      file=sys.stderr)
+            Metrics = kAudioMeter.Measure(Input, Args.audio_stream)
+            if kS.ErrorMode:
+                return 1
+            if Args.calibrate:
+                if not Args.profile_out:
+                    raise ToolInputException("--profile-out required in calibrate mode")
+                return kAudioCheckApp.Calibrate(Input, Metrics, Args.tolerance_db, Args.profile_out)
+            # Default mode: probe + optionally check
+            print(f"Measured audio (a:{Args.audio_stream}):")
+            for Key, Value in Metrics.items():
+                ValueText = "-inf" if Value == float("-inf") else f"{Value:.2f}"
+                print(f"  {Key:20} {ValueText}")
+            if Args.profile:
+                if not Path(Args.profile).exists():
+                    raise ToolInputException(f"profile not found: {Path(Args.profile)}")
+                return kAudioCheckApp.Check(Metrics, Args.profile)
+            return 0
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kAudioCheckApp.Run")
+            return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    kRun.Main(kAudioCheckApp)

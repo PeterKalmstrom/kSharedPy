@@ -37,10 +37,7 @@ Flags:
     --quiet             Less verbose output.
 """
 
-from __future__ import annotations
-
 import argparse
-import io
 import json
 import subprocess
 import sys
@@ -48,243 +45,271 @@ import tempfile
 import time
 from pathlib import Path
 
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
+from _ffmpeg import kFfmpeg
+from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
 
-def load_edl(edl_path: Path) -> tuple[str, float, list[dict]]:
-    data = json.loads(edl_path.read_text(encoding="utf-8"))
-    segs = data["segments"]
-    # Validate contiguity
-    for i, s in enumerate(segs):
-        if s["end"] <= s["start"]:
-            raise ValueError(f"segment {i}: end <= start ({s})")
-        if i > 0 and abs(segs[i - 1]["end"] - s["start"]) > 0.001:
-            raise ValueError(f"segment {i}: not contiguous with previous")
-    return data["source"], float(data.get("duration_s", segs[-1]["end"])), segs
+class kEdlCutter:
+    """Cuts and concatenates the keep ranges of one EDL out of one video with ffmpeg."""
 
+    @staticmethod
+    def LoadEdl(EdlPath):
+        """Return (source, duration_s, segments); a gap or an empty segment is a spec mistake (exit 2)."""
+        if kS.ErrorMode:
+            return ("", 0.0, [])
+        try:
+            Data = json.loads(EdlPath.read_text(encoding="utf-8"))
+            Segments = Data["segments"]
+            for Index, Segment in enumerate(Segments):
+                if Segment["end"] <= Segment["start"]:
+                    raise ToolInputException(f"segment {Index}: end <= start ({Segment})")
+                if Index > 0 and abs(Segments[Index - 1]["end"] - Segment["start"]) > 0.001:
+                    raise ToolInputException(f"segment {Index}: not contiguous with previous")
+            return (Data["source"], float(Data.get("duration_s", Segments[-1]["end"])), Segments)
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kEdlCutter.LoadEdl(file={EdlPath})")
+            return ("", 0.0, [])
 
-def keep_ranges(segments: list[dict], pad: float, total: float) -> list[tuple[float, float]]:
-    """Collapse adjacent kept segments and apply padding (clipped to [0, total])."""
-    ranges: list[tuple[float, float]] = []
-    for s in segments:
-        if not s["keep"]:
-            continue
-        a = max(0.0, s["start"] - pad)
-        b = min(total, s["end"] + pad)
-        if ranges and a <= ranges[-1][1] + 0.01:
-            ranges[-1] = (ranges[-1][0], max(ranges[-1][1], b))
-        else:
-            ranges.append((a, b))
-    return ranges
+    @staticmethod
+    def KeepRanges(Segments, Padding, Total):
+        """Collapse adjacent kept segments and apply padding (clipped to [0, Total])."""
+        if kS.ErrorMode:
+            return []
+        try:
+            Ranges = []
+            for Segment in Segments:
+                if not Segment["keep"]:
+                    continue
+                Start = max(0.0, Segment["start"] - Padding)
+                End = min(Total, Segment["end"] + Padding)
+                if Ranges and Start <= Ranges[-1][1] + 0.01:
+                    Ranges[-1] = (Ranges[-1][0], max(Ranges[-1][1], End))
+                else:
+                    Ranges.append((Start, End))
+            return Ranges
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kEdlCutter.KeepRanges")
+            return []
 
+    @staticmethod
+    def BuildFilterComplex(Ranges, AudioSource, AudioFadeSeconds=0.030, Fps=30.0):
+        """AudioSource is the filter-graph label for the audio source — e.g.
+        "[0:a:0]" for stream 0, or "[amix]" if upstream amerged the streams.
 
-def build_filter_complex(
-    ranges: list[tuple[float, float]],
-    audio_src: str,
-    audio_fade_s: float = 0.030,
-    fps: float = 30.0,
-) -> str:
-    """audio_src is the filter-graph label for the audio source — e.g.
-    "[0:a:0]" for stream 0, or "[amix]" if upstream amerged the streams.
+        AudioFadeSeconds adds a per-segment fade-in/fade-out on the audio to suppress
+        click/pop artifacts at cut boundaries. If a segment is shorter than
+        2*AudioFadeSeconds, fades are skipped for that segment.
 
-    audio_fade_s adds a per-segment fade-in/fade-out on the audio to suppress
-    click/pop artifacts at cut boundaries. If a segment is shorter than
-    2*audio_fade_s, fades are skipped for that segment.
+        Fps forces a constant frame rate on the concat output. Required because
+        screen-recording codecs (e.g. tscc2 from Camtasia) carry VFR timing
+        through trim+concat, leaving the encoded output at low avg_frame_rate
+        which confuses Windows Media metadata and some players.
+        """
+        if kS.ErrorMode:
+            return ""
+        try:
+            Parts = []
+            Labels = []
+            for Index, (Start, End) in enumerate(Ranges):
+                Duration = End - Start
+                Parts.append(f"[0:v]trim=start={Start:.3f}:end={End:.3f},setpts=PTS-STARTPTS[v{Index}]")
+                AudioChain = f"{AudioSource}atrim=start={Start:.3f}:end={End:.3f},asetpts=PTS-STARTPTS"
+                if AudioFadeSeconds > 0 and Duration > 2 * AudioFadeSeconds + 0.01:
+                    AudioChain += (f",afade=t=in:st=0:d={AudioFadeSeconds:.3f}"
+                                   f",afade=t=out:st={Duration - AudioFadeSeconds:.3f}:d={AudioFadeSeconds:.3f}")
+                AudioChain += f"[a{Index}]"
+                Parts.append(AudioChain)
+                Labels.append(f"[v{Index}][a{Index}]")
+            Parts.append(f"{''.join(Labels)}concat=n={len(Ranges)}:v=1:a=1[concatv][outa]")
+            # Force CFR on the concatenated video to keep avg_frame_rate sane.
+            Parts.append(f"[concatv]fps={Fps:g}[outv]")
+            return ";\n".join(Parts)
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kEdlCutter.BuildFilterComplex")
+            return ""
 
-    fps forces a constant frame rate on the concat output. Required because
-    screen-recording codecs (e.g. tscc2 from Camtasia) carry VFR timing
-    through trim+concat, leaving the encoded output at low avg_frame_rate
-    which confuses Windows Media metadata and some players.
-    """
-    parts = []
-    labels = []
-    for i, (a, b) in enumerate(ranges):
-        dur = b - a
-        parts.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{i}]")
-        a_chain = f"{audio_src}atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS"
-        if audio_fade_s > 0 and dur > 2 * audio_fade_s + 0.01:
-            a_chain += (f",afade=t=in:st=0:d={audio_fade_s:.3f}"
-                        f",afade=t=out:st={dur - audio_fade_s:.3f}:d={audio_fade_s:.3f}")
-        a_chain += f"[a{i}]"
-        parts.append(a_chain)
-        labels.append(f"[v{i}][a{i}]")
-    parts.append(f"{''.join(labels)}concat=n={len(ranges)}:v=1:a=1[concatv][outa]")
-    # Force CFR on the concatenated video to keep avg_frame_rate sane.
-    parts.append(f"[concatv]fps={fps:g}[outv]")
-    return ";\n".join(parts)
+    @staticmethod
+    def AddQuiet(Command, Quiet):
+        """Insert `-loglevel error` after the program name when Quiet."""
+        if kS.ErrorMode:
+            return Command
+        try:
+            if Quiet:
+                Command.insert(1, "-loglevel")
+                Command.insert(2, "error")
+            return Command
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kEdlCutter.AddQuiet")
+            return Command
 
-
-def run_reencode(
-    inp: Path, out: Path, ranges: list[tuple[float, float]],
-    vcodec: str, acodec: str, crf: int, preset: str,
-    audio_stream: int, mix_audio: bool, num_audio_streams: int,
-    audio_fade_s: float, fps: float, pix_fmt: str,
-    quiet: bool,
-) -> int:
-    if not ranges:
-        sys.stderr.write("ERROR: no keep ranges in EDL — nothing to output.\n")
-        return 1
-
-    if mix_audio and num_audio_streams > 1:
-        # amerge all audio streams, then feed into the trim/concat chain
-        amerge_inputs = "".join(f"[0:a:{i}]" for i in range(num_audio_streams))
-        prefix = f"{amerge_inputs}amerge=inputs={num_audio_streams}[amix]"
-        fc = prefix + ";\n" + build_filter_complex(ranges, "[amix]", audio_fade_s, fps)
-    else:
-        fc = build_filter_complex(ranges, f"[0:a:{audio_stream}]", audio_fade_s, fps)
-    # Write filter to a temp file so we don't blow up command-line length on Windows
-    with tempfile.NamedTemporaryFile("w", suffix=".filter", delete=False, encoding="utf-8") as f:
-        f.write(fc)
-        filter_path = f.name
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(inp),
-        "-filter_complex_script", filter_path,
-        "-map", "[outv]", "-map", "[outa]",
-        "-c:v", vcodec, "-crf", str(crf), "-preset", preset,
-        "-pix_fmt", pix_fmt,
-        "-c:a", acodec, "-b:a", "192k",
-        "-movflags", "+faststart",
-        str(out),
-    ]
-    if quiet:
-        cmd.insert(1, "-loglevel"); cmd.insert(2, "error")
-
-    if not quiet:
-        print(f"[vedit/apply] re-encode: {len(ranges)} keep ranges → {out}", file=sys.stderr)
-    rc = subprocess.run(cmd).returncode
-    Path(filter_path).unlink(missing_ok=True)
-    return rc
-
-
-def probe_audio_stream_count(inp: Path) -> int:
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "a",
-         "-show_entries", "stream=index", "-of", "csv=p=0", str(inp)],
-        capture_output=True, text=True, check=True,
-    )
-    return len([ln for ln in out.stdout.splitlines() if ln.strip()])
-
-
-def run_copy(
-    inp: Path, out: Path, ranges: list[tuple[float, float]], quiet: bool,
-) -> int:
-    """Stream-copy mode: extract each range to a temp file, then concat. Fast,
-    but cut precision is keyframe-bound."""
-    if not ranges:
-        sys.stderr.write("ERROR: no keep ranges in EDL — nothing to output.\n")
-        return 1
-
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="vedit_") as td:
-        td_path = Path(td)
-        list_path = td_path / "concat.txt"
-        parts: list[Path] = []
-        for i, (a, b) in enumerate(ranges):
-            part = td_path / f"part_{i:04d}.mp4"
-            cmd = [
+    @staticmethod
+    def RunReencode(Input, Out, Ranges, VideoCodec, AudioCodec, Crf, Preset, AudioStream, MixAudio,
+                    AudioStreamCount, AudioFadeSeconds, Fps, PixelFormat, Quiet):
+        """Re-encode the keep ranges into Out; returns ffmpeg's exit code."""
+        if kS.ErrorMode:
+            return 1
+        try:
+            if not Ranges:
+                raise ToolReportableException("no keep ranges in EDL — nothing to output.")
+            if MixAudio and AudioStreamCount > 1:
+                # amerge all audio streams, then feed into the trim/concat chain
+                AmergeInputs = "".join(f"[0:a:{Index}]" for Index in range(AudioStreamCount))
+                Prefix = f"{AmergeInputs}amerge=inputs={AudioStreamCount}[amix]"
+                FilterComplex = Prefix + ";\n" + kEdlCutter.BuildFilterComplex(Ranges, "[amix]", AudioFadeSeconds,
+                                                                               Fps)
+            else:
+                FilterComplex = kEdlCutter.BuildFilterComplex(Ranges, f"[0:a:{AudioStream}]", AudioFadeSeconds, Fps)
+            if kS.ErrorMode:
+                return 1
+            # Write the filter to a temp file so we don't blow up command-line length on Windows
+            with tempfile.NamedTemporaryFile("w", suffix=".filter", delete=False, encoding="utf-8") as File:
+                File.write(FilterComplex)
+                FilterPath = File.name
+            Command = kEdlCutter.AddQuiet([
                 "ffmpeg", "-y",
-                "-ss", f"{a:.3f}", "-to", f"{b:.3f}",
-                "-i", str(inp),
-                "-c", "copy",
-                "-avoid_negative_ts", "make_zero",
-                str(part),
-            ]
-            if quiet:
-                cmd.insert(1, "-loglevel"); cmd.insert(2, "error")
-            rc = subprocess.run(cmd).returncode
-            if rc != 0:
-                sys.stderr.write(f"ERROR: failed to extract range {i} ({a}–{b})\n")
-                return rc
-            parts.append(part)
+                "-i", str(Input),
+                "-filter_complex_script", FilterPath,
+                "-map", "[outv]", "-map", "[outa]",
+                "-c:v", VideoCodec, "-crf", str(Crf), "-preset", Preset,
+                "-pix_fmt", PixelFormat,
+                "-c:a", AudioCodec, "-b:a", "192k",
+                "-movflags", "+faststart",
+                str(Out),
+            ], Quiet)
+            if not Quiet:
+                print(f"[vedit/apply] re-encode: {len(Ranges)} keep ranges → {Out}", file=sys.stderr)
+            try:
+                return subprocess.run(Command).returncode
+            finally:
+                Path(FilterPath).unlink(missing_ok=True)
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kEdlCutter.RunReencode(file={Input})")
+            return 1
 
-        list_path.write_text(
-            "\n".join(f"file '{p.as_posix()}'" for p in parts), encoding="utf-8"
-        )
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0",
-            "-i", str(list_path),
-            "-c", "copy",
-            "-movflags", "+faststart",
-            str(out),
-        ]
-        if quiet:
-            cmd.insert(1, "-loglevel"); cmd.insert(2, "error")
-        return subprocess.run(cmd).returncode
+    @staticmethod
+    def RunCopy(Input, Out, Ranges, Quiet):
+        """Stream-copy mode: extract each range to a temp file, then concat. Fast,
+        but cut precision is keyframe-bound. Returns ffmpeg's exit code."""
+        if kS.ErrorMode:
+            return 1
+        try:
+            if not Ranges:
+                raise ToolReportableException("no keep ranges in EDL — nothing to output.")
+            Out.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="vedit_") as TempDir:
+                TempPath = Path(TempDir)
+                ListPath = TempPath / "concat.txt"
+                Parts = []
+                for Index, (Start, End) in enumerate(Ranges):
+                    Part = TempPath / f"part_{Index:04d}.mp4"
+                    Command = kEdlCutter.AddQuiet([
+                        "ffmpeg", "-y",
+                        "-ss", f"{Start:.3f}", "-to", f"{End:.3f}",
+                        "-i", str(Input),
+                        "-c", "copy",
+                        "-avoid_negative_ts", "make_zero",
+                        str(Part),
+                    ], Quiet)
+                    ReturnCode = subprocess.run(Command).returncode
+                    if ReturnCode != 0:
+                        sys.stderr.write(f"failed to extract range {Index} ({Start}–{End})\n")
+                        return ReturnCode
+                    Parts.append(Part)
+                ListPath.write_text("\n".join(f"file '{Part.as_posix()}'" for Part in Parts), encoding="utf-8")
+                Command = kEdlCutter.AddQuiet([
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0",
+                    "-i", str(ListPath),
+                    "-c", "copy",
+                    "-movflags", "+faststart",
+                    str(Out),
+                ], Quiet)
+                return subprocess.run(Command).returncode
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kEdlCutter.RunCopy(file={Input})")
+            return 1
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Apply an EDL: cut+concat keep ranges.")
-    ap.add_argument("--in", dest="inp", required=True)
-    ap.add_argument("--edl", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--copy", action="store_true",
-                    help="Stream-copy (fast, keyframe-bound). Default: re-encode.")
-    ap.add_argument("--vcodec", default="libx264")
-    ap.add_argument("--acodec", default="aac")
-    ap.add_argument("--crf", type=int, default=20)
-    ap.add_argument("--preset", default="medium")
-    ap.add_argument("--keep-padding-s", type=float, default=0.0)
-    ap.add_argument("--audio-stream", type=int, default=0,
-                    help="Which audio stream to keep (0-indexed). Default: 0.")
-    ap.add_argument("--mix-audio", action="store_true",
-                    help="Mix all audio streams into one (overrides --audio-stream).")
-    ap.add_argument("--audio-fade-ms", type=int, default=30,
-                    help="Audio fade-in/out at each cut boundary, ms. Default: 30. 0=disabled.")
-    ap.add_argument("--fps", type=float, default=30.0,
-                    help="Output frame rate (CFR). Default: 30.")
-    ap.add_argument("--pix-fmt", default="yuv420p",
-                    help="Output pixel format. Default: yuv420p (broad compatibility).")
-    ap.add_argument("--quiet", action="store_true")
-    args = ap.parse_args()
+class kApplyApp:
+    """Command line."""
 
-    inp = Path(args.inp)
-    out = Path(args.out)
-    edl_path = Path(args.edl)
-    if not inp.exists():
-        sys.stderr.write(f"ERROR: input not found: {inp}\n"); return 2
-    if not edl_path.exists():
-        sys.stderr.write(f"ERROR: EDL not found: {edl_path}\n"); return 2
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
+        try:
+            Parser = argparse.ArgumentParser(description="Apply an EDL: cut+concat keep ranges.")
+            Parser.add_argument("--in", dest="inp", required=True)
+            Parser.add_argument("--edl", required=True)
+            Parser.add_argument("--out", required=True)
+            Parser.add_argument("--copy", action="store_true",
+                                help="Stream-copy (fast, keyframe-bound). Default: re-encode.")
+            Parser.add_argument("--vcodec", default="libx264")
+            Parser.add_argument("--acodec", default="aac")
+            Parser.add_argument("--crf", type=int, default=20)
+            Parser.add_argument("--preset", default="medium")
+            Parser.add_argument("--keep-padding-s", type=float, default=0.0)
+            Parser.add_argument("--audio-stream", type=int, default=0,
+                                help="Which audio stream to keep (0-indexed). Default: 0.")
+            Parser.add_argument("--mix-audio", action="store_true",
+                                help="Mix all audio streams into one (overrides --audio-stream).")
+            Parser.add_argument("--audio-fade-ms", type=int, default=30,
+                                help="Audio fade-in/out at each cut boundary, ms. Default: 30. 0=disabled.")
+            Parser.add_argument("--fps", type=float, default=30.0,
+                                help="Output frame rate (CFR). Default: 30.")
+            Parser.add_argument("--pix-fmt", default="yuv420p",
+                                help="Output pixel format. Default: yuv420p (broad compatibility).")
+            Parser.add_argument("--quiet", action="store_true")
+            Args = Parser.parse_args()
 
-    try:
-        from _ffmpeg import ensure_ffmpeg
-    except ImportError:
-        sys.path.insert(0, str(Path(__file__).parent))
-        from _ffmpeg import ensure_ffmpeg
-    ensure_ffmpeg()
-
-    src, total, segs = load_edl(edl_path)
-    ranges = keep_ranges(segs, args.keep_padding_s, total)
-    kept = sum(b - a for a, b in ranges)
-    if not args.quiet:
-        print(f"[vedit/apply] EDL: {len(segs)} segments, {len(ranges)} kept ranges, "
-              f"{kept:.1f}s of {total:.1f}s ({100*kept/total:.1f}%)", file=sys.stderr)
-
-    out.parent.mkdir(parents=True, exist_ok=True)
-    t0 = time.monotonic()
-    if args.copy:
-        rc = run_copy(inp, out, ranges, args.quiet)
-    else:
-        n_audio = probe_audio_stream_count(inp)
-        if not args.quiet and n_audio != 1:
-            print(f"[vedit/apply] {n_audio} audio streams; using "
-                  f"{'amix' if args.mix_audio else f'stream {args.audio_stream}'}",
-                  file=sys.stderr)
-        rc = run_reencode(inp, out, ranges,
-                          args.vcodec, args.acodec, args.crf, args.preset,
-                          args.audio_stream, args.mix_audio, n_audio,
-                          args.audio_fade_ms / 1000.0,
-                          args.fps, args.pix_fmt,
-                          args.quiet)
-
-    if rc == 0 and not args.quiet:
-        print(f"[vedit/apply] done in {time.monotonic() - t0:.1f}s → {out}", file=sys.stderr)
-    return rc
+            Input = Path(Args.inp)
+            Out = Path(Args.out)
+            EdlPath = Path(Args.edl)
+            if not Input.exists():
+                raise ToolInputException(f"input not found: {Input}")
+            if not EdlPath.exists():
+                raise ToolInputException(f"EDL not found: {EdlPath}")
+            kFfmpeg.Ensure()
+            _Source, Total, Segments = kEdlCutter.LoadEdl(EdlPath)
+            Ranges = kEdlCutter.KeepRanges(Segments, Args.keep_padding_s, Total)
+            if kS.ErrorMode:
+                return 1
+            Kept = sum(End - Start for Start, End in Ranges)
+            if not Args.quiet:
+                print(f"[vedit/apply] EDL: {len(Segments)} segments, {len(Ranges)} kept ranges, "
+                      f"{Kept:.1f}s of {Total:.1f}s ({100*Kept/Total:.1f}%)", file=sys.stderr)
+            Out.parent.mkdir(parents=True, exist_ok=True)
+            StartTime = time.monotonic()
+            if Args.copy:
+                ReturnCode = kEdlCutter.RunCopy(Input, Out, Ranges, Args.quiet)
+            else:
+                AudioStreamCount = kFfmpeg.ProbeAudioStreamCount(Input)
+                if not Args.quiet and AudioStreamCount != 1:
+                    print(f"[vedit/apply] {AudioStreamCount} audio streams; using "
+                          f"{'amix' if Args.mix_audio else f'stream {Args.audio_stream}'}",
+                          file=sys.stderr)
+                ReturnCode = kEdlCutter.RunReencode(Input, Out, Ranges,
+                                                    Args.vcodec, Args.acodec, Args.crf, Args.preset,
+                                                    Args.audio_stream, Args.mix_audio, AudioStreamCount,
+                                                    Args.audio_fade_ms / 1000.0,
+                                                    Args.fps, Args.pix_fmt,
+                                                    Args.quiet)
+            if kS.ErrorMode:
+                return 1
+            if ReturnCode == 0 and not Args.quiet:
+                print(f"[vedit/apply] done in {time.monotonic() - StartTime:.1f}s → {Out}", file=sys.stderr)
+            return ReturnCode
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kApplyApp.Run")
+            return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    kRun.Main(kApplyApp)

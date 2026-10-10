@@ -33,67 +33,68 @@ Flags:
     --polish-model M   Gemini model for polish. Default: gemini-2.5-flash.
 """
 
-from __future__ import annotations
-
 import argparse
-import io
 import json
 import os
 import re
 import sys
 from pathlib import Path
 
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
+from _ffmpeg import kDependency
+from kGenAi import kGenAi
+from kShared import ToolInputException, kRun, kS, kToolException
 
 
-def remap_to_cut_timeline(
-    transcript_segs: list[dict],
-    keep_ranges: list[tuple[float, float]],
-) -> list[dict]:
-    """Re-map transcript segments to a timeline where everything outside
-    keep_ranges has been removed and kept ranges are concatenated.
+class kCutTimeline:
+    """Moves transcript cues onto the timeline of the cut video."""
 
-    Each input segment gets clipped to each kept range it overlaps. The
-    text is clipped too — only the WORDS whose midpoint falls inside the
-    kept portion are emitted. This prevents duplicate text when a segment
-    straddles a cut boundary (which is common after word-snap).
-    """
-    out: list[dict] = []
-    cumulative = 0.0  # post-cut time at which the current keep range starts
-    for ks, ke in keep_ranges:
-        for s in transcript_segs:
-            if s["end"] <= ks or s["start"] >= ke:
-                continue
-            clipped_start = max(s["start"], ks)
-            clipped_end = min(s["end"], ke)
-            if clipped_end <= clipped_start + 0.01:
-                continue
+    @staticmethod
+    def Remap(TranscriptSegments, KeepRanges):
+        """Re-map transcript segments to a timeline where everything outside
+        KeepRanges has been removed and kept ranges are concatenated.
 
-            # Pick words by midpoint inside [clipped_start, clipped_end].
-            words = s.get("words") or []
-            if words:
-                kept = [w for w in words
-                        if clipped_start <= (w["start"] + w["end"]) / 2 <= clipped_end]
-                if not kept:
-                    continue
-                text = "".join(w["word"] for w in kept).strip()
-                # Use the kept words' tight time bounds for better cue alignment
-                wstart = max(clipped_start, kept[0]["start"])
-                wend = min(clipped_end, kept[-1]["end"])
-            else:
-                text = s["text"]
-                wstart = clipped_start
-                wend = clipped_end
-
-            if not text:
-                continue
-            new_start = cumulative + (wstart - ks)
-            new_end = cumulative + (wend - ks)
-            out.append({"start": new_start, "end": new_end, "text": text})
-        cumulative += ke - ks
-    return out
+        Each input segment gets clipped to each kept range it overlaps. The
+        text is clipped too — only the WORDS whose midpoint falls inside the
+        kept portion are emitted. This prevents duplicate text when a segment
+        straddles a cut boundary (which is common after word-snap).
+        """
+        if kS.ErrorMode:
+            return []
+        try:
+            Out = []
+            Cumulative = 0.0  # post-cut time at which the current keep range starts
+            for KeepStart, KeepEnd in KeepRanges:
+                for Segment in TranscriptSegments:
+                    if Segment["end"] <= KeepStart or Segment["start"] >= KeepEnd:
+                        continue
+                    ClippedStart = max(Segment["start"], KeepStart)
+                    ClippedEnd = min(Segment["end"], KeepEnd)
+                    if ClippedEnd <= ClippedStart + 0.01:
+                        continue
+                    # Pick words by midpoint inside [ClippedStart, ClippedEnd].
+                    Words = Segment.get("words") or []
+                    if Words:
+                        Kept = [Word for Word in Words
+                                if ClippedStart <= (Word["start"] + Word["end"]) / 2 <= ClippedEnd]
+                        if not Kept:
+                            continue
+                        Text = "".join(Word["word"] for Word in Kept).strip()
+                        # Use the kept words' tight time bounds for better cue alignment
+                        WordStart = max(ClippedStart, Kept[0]["start"])
+                        WordEnd = min(ClippedEnd, Kept[-1]["end"])
+                    else:
+                        Text = Segment["text"]
+                        WordStart = ClippedStart
+                        WordEnd = ClippedEnd
+                    if not Text:
+                        continue
+                    Out.append({"start": Cumulative + (WordStart - KeepStart),
+                                "end": Cumulative + (WordEnd - KeepStart), "text": Text})
+                Cumulative += KeepEnd - KeepStart
+            return Out
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kCutTimeline.Remap")
+            return []
 
 
 POLISH_PROMPT = """You are cleaning up the subtitle text for a screen-recording tutorial. Each input line is one subtitle cue, marked with [N] where N is the cue number. Output the same cues with the same numbers, but with the TEXT polished for readability.
@@ -126,173 +127,226 @@ No preamble, no explanation, no markdown. Just the [N] lines.
 """
 
 
-def polish_cues_with_llm(
-    cues: list[dict], model: str,
-) -> list[dict]:
-    """Polish the .text of each cue via Gemini. Cue boundaries and timing are preserved.
+class kCuePolisher:
+    """Gemini polish of the cue texts. Cue boundaries and timing are preserved."""
 
-    On any error (no key, API failure, bad response), returns the input cues
-    unchanged and prints a warning — the .srt should still be produced.
-    """
-    if not cues:
-        return cues
-    if "GEMINI_API_KEY" not in os.environ and "GOOGLE_API_KEY" not in os.environ:
-        sys.stderr.write(
-            "[vedit/subtitles] WARNING: GEMINI_API_KEY not set; skipping polish "
-            "(raw transcript will be used). Pass --no-polish to suppress this warning.\n"
-        )
-        return cues
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError:
-        sys.stderr.write(
-            "[vedit/subtitles] WARNING: google-genai not installed; skipping polish.\n"
-            "  Run with: uvx --with google-genai python subtitles.py ...\n"
-        )
-        return cues
+    CUE_LINE = re.compile(r"^\[(\d+)\]\s*(.*)$")
 
-    numbered = "\n".join(f"[{i+1}] {c['text']}" for i, c in enumerate(cues))
-    prompt = POLISH_PROMPT.format(cues=numbered)
+    @staticmethod
+    def Polish(Cues, Model):
+        """Polish the text of each cue via Gemini.
 
-    sys.stderr.write(
-        f"[vedit/subtitles] polishing {len(cues)} cues via {model} "
-        f"({len(numbered):,} chars)…\n"
-    )
-
-    try:
-        client = genai.Client()
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.2),
-        )
-    except Exception as ex:
-        sys.stderr.write(
-            f"[vedit/subtitles] WARNING: Gemini polish failed ({ex}); using raw text.\n"
-        )
-        return cues
-
-    raw = response.text or ""
-    pattern = re.compile(r"^\[(\d+)\]\s*(.*)$")
-    polished_by_index: dict[int, str] = {}
-    for line in raw.splitlines():
-        m = pattern.match(line.strip())
-        if not m:
-            continue
-        idx = int(m.group(1))
-        polished_by_index[idx] = m.group(2).strip()
-
-    out: list[dict] = []
-    missing = 0
-    for i, c in enumerate(cues):
-        polished_text = polished_by_index.get(i + 1)
-        if polished_text:
-            out.append({**c, "text": polished_text})
-        else:
-            missing += 1
-            out.append(c)
-
-    if missing:
-        sys.stderr.write(
-            f"[vedit/subtitles] WARNING: {missing}/{len(cues)} cues missing from "
-            f"polish response; left raw.\n"
-        )
-    return out
-
-
-def fmt_srt_time(t: float) -> str:
-    h = int(t // 3600); t -= h * 3600
-    m = int(t // 60);   t -= m * 60
-    s = int(t);         ms = int(round((t - s) * 1000))
-    if ms == 1000:
-        s += 1; ms = 0
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+        A missing key, a missing google-genai package or a failed API call leaves the input cues unchanged with
+        a warning - the .srt is still produced (the raw transcript is a complete, correct fallback)."""
+        if kS.ErrorMode:
+            return Cues
+        try:
+            if not Cues:
+                return Cues
+            if "GEMINI_API_KEY" not in os.environ and "GOOGLE_API_KEY" not in os.environ:
+                sys.stderr.write(
+                    "[vedit/subtitles] WARNING: GEMINI_API_KEY not set; skipping polish "
+                    "(raw transcript will be used). Pass --no-polish to suppress this warning.\n"
+                )
+                return Cues
+            if not kDependency.Has("google.genai"):
+                sys.stderr.write(
+                    "[vedit/subtitles] WARNING: google-genai not installed; skipping polish.\n"
+                    "  Run with: uvx --with google-genai python subtitles.py ...\n"
+                )
+                return Cues
+            genai, types, _Errors = kGenAi.Load("subtitles.py")
+            Numbered = "\n".join(f"[{Index+1}] {Cue['text']}" for Index, Cue in enumerate(Cues))
+            Prompt = POLISH_PROMPT.format(cues=Numbered)
+            sys.stderr.write(
+                f"[vedit/subtitles] polishing {len(Cues)} cues via {Model} "
+                f"({len(Numbered):,} chars)…\n"
+            )
+            try:
+                Client = genai.Client()
+                Response = Client.models.generate_content(
+                    model=Model,
+                    contents=Prompt,
+                    config=types.GenerateContentConfig(temperature=0.2),
+                )
+            except Exception as Failure:  # ERROR-SUPPRESSED-JUSTIFIED: polish is optional - the raw cues are a correct result and the warning says so
+                sys.stderr.write(
+                    f"[vedit/subtitles] WARNING: Gemini polish failed ({Failure}); using raw text.\n"
+                )
+                return Cues
+            PolishedByIndex = {}
+            for Line in (Response.text or "").splitlines():
+                Match = kCuePolisher.CUE_LINE.match(Line.strip())
+                if not Match:
+                    continue
+                PolishedByIndex[int(Match.group(1))] = Match.group(2).strip()
+            Out = []
+            Missing = 0
+            for Index, Cue in enumerate(Cues):
+                PolishedText = PolishedByIndex.get(Index + 1)
+                if PolishedText:
+                    Out.append({**Cue, "text": PolishedText})
+                else:
+                    Missing += 1
+                    Out.append(Cue)
+            if Missing:
+                sys.stderr.write(
+                    f"[vedit/subtitles] WARNING: {Missing}/{len(Cues)} cues missing from "
+                    f"polish response; left raw.\n"
+                )
+            return Out
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kCuePolisher.Polish(model={Model})")
+            return Cues
 
 
-def fmt_vtt_time(t: float) -> str:
-    return fmt_srt_time(t).replace(",", ".")
+class kSubtitleWriter:
+    """Formats cues as SRT or WebVTT text."""
+
+    @staticmethod
+    def SrtTime(Seconds):
+        """Seconds as an SRT timestamp HH:MM:SS,mmm."""
+        if kS.ErrorMode:
+            return "00:00:00,000"
+        try:
+            Hours = int(Seconds // 3600)
+            Seconds -= Hours * 3600
+            Minutes = int(Seconds // 60)
+            Seconds -= Minutes * 60
+            Whole = int(Seconds)
+            Millis = int(round((Seconds - Whole) * 1000))
+            if Millis == 1000:
+                Whole += 1
+                Millis = 0
+            return f"{Hours:02d}:{Minutes:02d}:{Whole:02d},{Millis:03d}"
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kSubtitleWriter.SrtTime")
+            return "00:00:00,000"
+
+    @staticmethod
+    def VttTime(Seconds):
+        """Seconds as a WebVTT timestamp HH:MM:SS.mmm."""
+        if kS.ErrorMode:
+            return "00:00:00.000"
+        try:
+            return kSubtitleWriter.SrtTime(Seconds).replace(",", ".")
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kSubtitleWriter.VttTime")
+            return "00:00:00.000"
+
+    @staticmethod
+    def Wrap(Text, MaxLine):
+        """Soft-wrap Text at MaxLine characters on word boundaries."""
+        if kS.ErrorMode:
+            return Text
+        try:
+            Lines = []
+            Current = ""
+            for Word in Text.split():
+                if Current and len(Current) + 1 + len(Word) > MaxLine:
+                    Lines.append(Current)
+                    Current = Word
+                else:
+                    Current = (Current + " " + Word) if Current else Word
+            if Current:
+                Lines.append(Current)
+            return "\n".join(Lines)
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kSubtitleWriter.Wrap")
+            return Text
+
+    @staticmethod
+    def ToSrt(Segments, MaxLine):
+        """The cues as SRT text."""
+        if kS.ErrorMode:
+            return ""
+        try:
+            Out = []
+            for Index, Segment in enumerate(Segments, 1):
+                Out.append(str(Index))
+                Out.append(f"{kSubtitleWriter.SrtTime(Segment['start'])} --> "
+                           f"{kSubtitleWriter.SrtTime(Segment['end'])}")
+                Out.append(kSubtitleWriter.Wrap(Segment["text"].strip(), MaxLine))
+                Out.append("")
+            return "\n".join(Out)
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kSubtitleWriter.ToSrt")
+            return ""
+
+    @staticmethod
+    def ToVtt(Segments, MaxLine):
+        """The cues as WebVTT text."""
+        if kS.ErrorMode:
+            return ""
+        try:
+            Out = ["WEBVTT", ""]
+            for Segment in Segments:
+                Out.append(f"{kSubtitleWriter.VttTime(Segment['start'])} --> "
+                           f"{kSubtitleWriter.VttTime(Segment['end'])}")
+                Out.append(kSubtitleWriter.Wrap(Segment["text"].strip(), MaxLine))
+                Out.append("")
+            return "\n".join(Out)
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kSubtitleWriter.ToVtt")
+            return ""
 
 
-def wrap_text(text: str, max_line: int) -> str:
-    words = text.split()
-    lines: list[str] = []
-    cur = ""
-    for w in words:
-        if cur and len(cur) + 1 + len(w) > max_line:
-            lines.append(cur)
-            cur = w
-        else:
-            cur = (cur + " " + w) if cur else w
-    if cur:
-        lines.append(cur)
-    return "\n".join(lines)
+class kSubtitlesApp:
+    """Command line."""
 
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
+        try:
+            Parser = argparse.ArgumentParser(description="Emit .srt/.vtt from transcript ± EDL.")
+            Parser.add_argument("--transcript", required=True)
+            Parser.add_argument("--edl", default=None)
+            Parser.add_argument("--out", required=True)
+            Parser.add_argument("--format", default=None, choices=["srt", "vtt"])
+            Parser.add_argument("--max-line", type=int, default=80)
+            Parser.add_argument("--no-polish", action="store_true",
+                                help="Skip the LLM polish pass (default: polish on).")
+            Parser.add_argument("--polish-model", default="gemini-2.5-flash")
+            Args = Parser.parse_args()
 
-def to_srt(segments: list[dict], max_line: int) -> str:
-    out: list[str] = []
-    for i, s in enumerate(segments, 1):
-        out.append(str(i))
-        out.append(f"{fmt_srt_time(s['start'])} --> {fmt_srt_time(s['end'])}")
-        out.append(wrap_text(s["text"].strip(), max_line))
-        out.append("")
-    return "\n".join(out)
-
-
-def to_vtt(segments: list[dict], max_line: int) -> str:
-    out: list[str] = ["WEBVTT", ""]
-    for s in segments:
-        out.append(f"{fmt_vtt_time(s['start'])} --> {fmt_vtt_time(s['end'])}")
-        out.append(wrap_text(s["text"].strip(), max_line))
-        out.append("")
-    return "\n".join(out)
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Emit .srt/.vtt from transcript ± EDL.")
-    ap.add_argument("--transcript", required=True)
-    ap.add_argument("--edl", default=None)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--format", default=None, choices=["srt", "vtt"])
-    ap.add_argument("--max-line", type=int, default=80)
-    ap.add_argument("--no-polish", action="store_true",
-                    help="Skip the LLM polish pass (default: polish on).")
-    ap.add_argument("--polish-model", default="gemini-2.5-flash")
-    args = ap.parse_args()
-
-    tpath = Path(args.transcript)
-    if not tpath.exists():
-        sys.stderr.write(f"ERROR: transcript not found: {tpath}\n"); return 2
-    transcript = json.loads(tpath.read_text(encoding="utf-8"))
-
-    segments = transcript["segments"]
-
-    if args.edl:
-        epath = Path(args.edl)
-        if not epath.exists():
-            sys.stderr.write(f"ERROR: EDL not found: {epath}\n"); return 2
-        edl = json.loads(epath.read_text(encoding="utf-8"))
-        keep_ranges = [(float(s["start"]), float(s["end"]))
-                       for s in edl["segments"] if s["keep"]]
-        segments = remap_to_cut_timeline(segments, keep_ranges)
-
-    if not args.no_polish:
-        segments = polish_cues_with_llm(segments, args.polish_model)
-
-    out_path = Path(args.out)
-    fmt = args.format or out_path.suffix.lstrip(".").lower()
-    if fmt not in ("srt", "vtt"):
-        sys.stderr.write(f"ERROR: unsupported format '{fmt}' "
-                         f"(use --format srt|vtt or .srt/.vtt extension)\n")
-        return 2
-
-    text = to_srt(segments, args.max_line) if fmt == "srt" else to_vtt(segments, args.max_line)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(text, encoding="utf-8")
-    sys.stderr.write(f"[vedit/subtitles] wrote {len(segments)} cues "
-                     f"({'cut-timeline' if args.edl else 'source-timeline'}) → {out_path}\n")
-    return 0
+            TranscriptPath = Path(Args.transcript)
+            if not TranscriptPath.exists():
+                raise ToolInputException(f"transcript not found: {TranscriptPath}")
+            EdlPath = Path(Args.edl) if Args.edl else None
+            if EdlPath is not None and not EdlPath.exists():
+                raise ToolInputException(f"EDL not found: {EdlPath}")
+            OutPath = Path(Args.out)
+            Format = Args.format or OutPath.suffix.lstrip(".").lower()
+            if Format not in ("srt", "vtt"):  # checked before the paid polish call, not after it
+                raise ToolInputException(f"unsupported format '{Format}' "
+                                         f"(use --format srt|vtt or .srt/.vtt extension)")
+            Segments = json.loads(TranscriptPath.read_text(encoding="utf-8"))["segments"]
+            if EdlPath is not None:
+                Edl = json.loads(EdlPath.read_text(encoding="utf-8"))
+                KeepRanges = [(float(Segment["start"]), float(Segment["end"]))
+                              for Segment in Edl["segments"] if Segment["keep"]]
+                Segments = kCutTimeline.Remap(Segments, KeepRanges)
+            if not Args.no_polish:
+                Segments = kCuePolisher.Polish(Segments, Args.polish_model)
+            if Format == "srt":
+                Text = kSubtitleWriter.ToSrt(Segments, Args.max_line)
+            else:
+                Text = kSubtitleWriter.ToVtt(Segments, Args.max_line)
+            if kS.ErrorMode:
+                return 1
+            OutPath.parent.mkdir(parents=True, exist_ok=True)
+            OutPath.write_text(Text, encoding="utf-8")
+            sys.stderr.write(f"[vedit/subtitles] wrote {len(Segments)} cues "
+                             f"({'cut-timeline' if Args.edl else 'source-timeline'}) → {OutPath}\n")
+            return 0
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kSubtitlesApp.Run")
+            return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    kRun.Main(kSubtitlesApp)

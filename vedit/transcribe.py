@@ -22,129 +22,165 @@ Flags:
 
 First run downloads the model (~470MB for medium.en) to the HF cache.
 """
-
-from __future__ import annotations
-
 import argparse
-import io
 import json
 import sys
 import time
 from pathlib import Path
 
-# Force UTF-8 stdout (Windows safe)
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
+from _ffmpeg import kDependency, kFfmpeg
+from kShared import ToolInputException, kRun, kS, kToolException
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Transcribe with faster-whisper.")
-    ap.add_argument("--in", dest="inp", required=True, help="Input media file")
-    ap.add_argument("--out", dest="out", required=True, help="Output JSON path")
-    ap.add_argument("--model", default="small.en")
-    ap.add_argument("--language", default="en")
-    ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
-    ap.add_argument("--compute-type", default=None,
-                    help="Override quantization (int8/float16/float32)")
-    ap.add_argument("--quiet", action="store_true")
-    args = ap.parse_args()
+class kTranscriber:
+    """One faster-whisper run over one media file."""
 
-    inp = Path(args.inp)
-    out = Path(args.out)
-    if not inp.exists():
-        sys.stderr.write(f"ERROR: input not found: {inp}\n")
-        return 2
+    def __init__(self, Input, Model, Language, Device, ComputeType, Quiet):
+        try:
+            self.Input = Input
+            self.Model = Model
+            self.Language = Language
+            self.Device = Device
+            self.ComputeType = ComputeType or ("int8" if Device == "cpu" else "float16")
+            self.Quiet = Quiet
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kTranscriber.__init__")
 
-    # Make sure ffmpeg is reachable (faster-whisper uses it for decoding)
-    try:
-        from _ffmpeg import ensure_ffmpeg
-    except ImportError:
-        sys.path.insert(0, str(Path(__file__).parent))
-        from _ffmpeg import ensure_ffmpeg
-    ensure_ffmpeg()
+    @staticmethod
+    def WordToDict(Word):
+        """One recognised word as its JSON form."""
+        if kS.ErrorMode:
+            return {}
+        try:
+            return {
+                "start": round(Word.start, 3),
+                "end": round(Word.end, 3),
+                "word": Word.word,
+                "probability": round(Word.probability, 4),
+            }
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kTranscriber.WordToDict")
+            return {}
 
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError:
-        sys.stderr.write(
-            "ERROR: faster-whisper not installed.\n"
-            "Run via: uvx --with faster-whisper --with static-ffmpeg python transcribe.py ...\n"
-        )
-        return 2
+    @staticmethod
+    def SegmentToDict(Segment):
+        """One recognised segment (with its words) as its JSON form."""
+        if kS.ErrorMode:
+            return {}
+        try:
+            Words = []
+            if Segment.words:
+                for Word in Segment.words:
+                    Words.append(kTranscriber.WordToDict(Word))
+            return {
+                "start": round(Segment.start, 3),
+                "end": round(Segment.end, 3),
+                "text": Segment.text.strip(),
+                "avg_logprob": round(Segment.avg_logprob, 4),
+                "no_speech_prob": round(Segment.no_speech_prob, 4),
+                "words": Words,
+            }
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kTranscriber.SegmentToDict")
+            return {}
 
-    compute_type = args.compute_type or ("int8" if args.device == "cpu" else "float16")
-    if not args.quiet:
-        print(f"[vedit/transcribe] loading {args.model} on {args.device} ({compute_type})",
-              file=sys.stderr)
+    def Transcribe(self):
+        """The transcript payload (dict) written by the command line; None after a reported error."""
+        if kS.ErrorMode:
+            return None
+        try:
+            from faster_whisper import WhisperModel  # optional package, checked by the App
+            if not self.Quiet:
+                print(f"[vedit/transcribe] loading {self.Model} on {self.Device} ({self.ComputeType})",
+                      file=sys.stderr)
+            self.StartTime = time.monotonic()
+            Model = WhisperModel(self.Model, device=self.Device, compute_type=self.ComputeType)
+            Language = None if self.Language == "auto" else self.Language
+            SegmentsIter, Info = Model.transcribe(
+                str(self.Input),
+                language=Language,
+                beam_size=5,
+                word_timestamps=True,
+                vad_filter=True,
+                vad_parameters={"min_silence_duration_ms": 500},
+            )
+            if not self.Quiet:
+                print(f"[vedit/transcribe] detected language={Info.language} "
+                      f"prob={Info.language_probability:.2f} duration={Info.duration:.1f}s",
+                      file=sys.stderr)
+            OutSegments = []
+            LastPrint = 0.0
+            for Segment in SegmentsIter:
+                OutSegments.append(kTranscriber.SegmentToDict(Segment))
+                if not self.Quiet and Segment.end - LastPrint >= 30.0:
+                    Elapsed = time.monotonic() - self.StartTime
+                    Speed = Segment.end / Elapsed if Elapsed > 0 else 0
+                    print(f"  {Segment.end:7.1f}s / {Info.duration:.1f}s "
+                          f"({100*Segment.end/Info.duration:5.1f}%, {Speed:.2f}x realtime)",
+                          file=sys.stderr)
+                    LastPrint = Segment.end
+            self.Duration = Info.duration
+            return {
+                "source": str(self.Input),
+                "language": Info.language,
+                "duration_s": round(Info.duration, 3),
+                "model": self.Model,
+                "device": self.Device,
+                "compute_type": self.ComputeType,
+                "segments": OutSegments,
+            }
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kTranscriber.Transcribe(file={self.Input})")
+            return None
 
-    t0 = time.monotonic()
-    model = WhisperModel(args.model, device=args.device, compute_type=compute_type)
 
-    language = None if args.language == "auto" else args.language
-    segments_iter, info = model.transcribe(
-        str(inp),
-        language=language,
-        beam_size=5,
-        word_timestamps=True,
-        vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 500},
-    )
+class kTranscribeApp:
+    """Command line."""
 
-    if not args.quiet:
-        print(f"[vedit/transcribe] detected language={info.language} "
-              f"prob={info.language_probability:.2f} duration={info.duration:.1f}s",
-              file=sys.stderr)
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
+        try:
+            Parser = argparse.ArgumentParser(description="Transcribe with faster-whisper.")
+            Parser.add_argument("--in", dest="inp", required=True, help="Input media file")
+            Parser.add_argument("--out", dest="out", required=True, help="Output JSON path")
+            Parser.add_argument("--model", default="small.en")
+            Parser.add_argument("--language", default="en")
+            Parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
+            Parser.add_argument("--compute-type", default=None,
+                                help="Override quantization (int8/float16/float32)")
+            Parser.add_argument("--quiet", action="store_true")
+            Args = Parser.parse_args()
 
-    out_segments = []
-    last_print = 0.0
-    for s in segments_iter:
-        words = []
-        if s.words:
-            for w in s.words:
-                words.append({
-                    "start": round(w.start, 3),
-                    "end": round(w.end, 3),
-                    "word": w.word,
-                    "probability": round(w.probability, 4),
-                })
-        out_segments.append({
-            "start": round(s.start, 3),
-            "end": round(s.end, 3),
-            "text": s.text.strip(),
-            "avg_logprob": round(s.avg_logprob, 4),
-            "no_speech_prob": round(s.no_speech_prob, 4),
-            "words": words,
-        })
-        if not args.quiet and s.end - last_print >= 30.0:
-            elapsed = time.monotonic() - t0
-            speed = s.end / elapsed if elapsed > 0 else 0
-            print(f"  {s.end:7.1f}s / {info.duration:.1f}s "
-                  f"({100*s.end/info.duration:5.1f}%, {speed:.2f}x realtime)",
-                  file=sys.stderr)
-            last_print = s.end
-
-    payload = {
-        "source": str(inp),
-        "language": info.language,
-        "duration_s": round(info.duration, 3),
-        "model": args.model,
-        "device": args.device,
-        "compute_type": compute_type,
-        "segments": out_segments,
-    }
-
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    elapsed = time.monotonic() - t0
-    if not args.quiet:
-        speed = info.duration / elapsed if elapsed > 0 else 0
-        print(f"[vedit/transcribe] done in {elapsed:.1f}s ({speed:.2f}x realtime). "
-              f"{len(out_segments)} segments → {out}",
-              file=sys.stderr)
-    return 0
+            Input = Path(Args.inp)
+            Out = Path(Args.out)
+            if not Input.exists():
+                raise ToolInputException(f"input not found: {Input}")
+            kFfmpeg.Ensure()  # faster-whisper decodes through ffmpeg
+            if not kDependency.Has("faster_whisper"):
+                raise ToolInputException(
+                    "faster-whisper not installed.\n"
+                    "Run via: uvx --with faster-whisper --with static-ffmpeg python transcribe.py ...")
+            Transcriber = kTranscriber(Input, Args.model, Args.language, Args.device, Args.compute_type,
+                                       Args.quiet)
+            Payload = Transcriber.Transcribe()
+            if kS.ErrorMode:
+                return 1
+            Out.parent.mkdir(parents=True, exist_ok=True)
+            Out.write_text(json.dumps(Payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            Elapsed = time.monotonic() - Transcriber.StartTime
+            if not Args.quiet:
+                Speed = Transcriber.Duration / Elapsed if Elapsed > 0 else 0
+                print(f"[vedit/transcribe] done in {Elapsed:.1f}s ({Speed:.2f}x realtime). "
+                      f"{len(Payload['segments'])} segments → {Out}",
+                      file=sys.stderr)
+            return 0
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kTranscribeApp.Run")
+            return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    kRun.Main(kTranscribeApp)

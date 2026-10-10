@@ -17,123 +17,162 @@ Flags:
     --width N           Wrap output text at N characters. Default: 80. Set 0
                          to disable wrapping.
 """
-
-from __future__ import annotations
-
 import argparse
-import io
 import re
 import sys
 import textwrap
 from pathlib import Path
 
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
+from kShared import ToolInputException, kRun, kS, kToolException
 
-
-TS_RE = re.compile(
+TIMESTAMP_PATTERN = re.compile(
     r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})"
 )
 
 
-def srt_to_seconds(h: str, m: str, s: str, ms: str) -> float:
-    return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
+class kSrtParser:
+    """Reads the cues of one .srt text: [{start, end, text}, ...]."""
+
+    def __init__(self):
+        try:
+            self.Cues = []
+            self.Current = None
+            self.Lines = []
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kSrtParser.__init__")
+
+    @staticmethod
+    def ToSeconds(Hours, Minutes, Seconds, Milliseconds):
+        """One SRT timestamp's parts as seconds."""
+        if kS.ErrorMode:
+            return 0.0
+        try:
+            return int(Hours) * 3600 + int(Minutes) * 60 + int(Seconds) + int(Milliseconds) / 1000
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kSrtParser.ToSeconds")
+            return 0.0
+
+    def Flush(self):
+        """Close the current cue: keep it when it has text, then start over."""
+        if kS.ErrorMode:
+            return
+        try:
+            if self.Current is not None and self.Lines:
+                self.Current["text"] = " ".join(Line.strip() for Line in self.Lines).strip()
+                self.Cues.append(self.Current)
+            self.Current = None
+            self.Lines = []
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kSrtParser.Flush")
+            return
+
+    def Parse(self, Text):
+        """Return the list of cues in Text."""
+        if kS.ErrorMode:
+            return []
+        try:
+            for Raw in Text.splitlines():
+                Line = Raw.rstrip()
+                if not Line:
+                    self.Flush()
+                    continue
+                Match = TIMESTAMP_PATTERN.search(Line)
+                if Match:
+                    self.Current = {
+                        "start": kSrtParser.ToSeconds(Match.group(1), Match.group(2), Match.group(3), Match.group(4)),
+                        "end": kSrtParser.ToSeconds(Match.group(5), Match.group(6), Match.group(7), Match.group(8)),
+                    }
+                    self.Lines = []
+                    continue
+                if re.match(r"^\d+$", Line) and self.Current is None:
+                    continue  # a cue number
+                if self.Current is not None:
+                    self.Lines.append(Line)
+            self.Flush()
+            return self.Cues
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kSrtParser.Parse")
+            return []
 
 
-def parse_srt(text: str) -> list[dict]:
-    """Return list of cues: [{start, end, text}, ...]."""
-    cues: list[dict] = []
-    current: dict | None = None
-    lines: list[str] = []
+class kScriptFormatter:
+    """Turns cues into reading-script text."""
 
-    def flush():
-        nonlocal current, lines
-        if current is not None and lines:
-            current["text"] = " ".join(l.strip() for l in lines).strip()
-            cues.append(current)
-        current = None
-        lines = []
-
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        if not line:
-            flush()
-            continue
-        m = TS_RE.search(line)
-        if m:
-            current = {
-                "start": srt_to_seconds(m.group(1), m.group(2), m.group(3), m.group(4)),
-                "end":   srt_to_seconds(m.group(5), m.group(6), m.group(7), m.group(8)),
-            }
-            lines = []
-            continue
-        if re.match(r"^\d+$", line) and current is None:
-            # Cue number — skip
-            continue
-        if current is not None:
-            lines.append(line)
-    flush()
-    return cues
-
-
-def format_script(cues: list[dict], paragraphs: bool, width: int) -> str:
-    if not cues:
-        return ""
-    out_lines: list[str] = []
-    if paragraphs:
-        paragraph: list[str] = []
-        for i, c in enumerate(cues):
-            paragraph.append(c["text"])
-            gap_to_next = (cues[i + 1]["start"] - c["end"]) if i + 1 < len(cues) else 999
-            if gap_to_next >= 1.5:
-                out_lines.append(" ".join(paragraph))
-                out_lines.append("")
-                paragraph = []
-        if paragraph:
-            out_lines.append(" ".join(paragraph))
-    else:
-        for c in cues:
-            out_lines.append(c["text"])
-
-    if width > 0:
-        wrapped: list[str] = []
-        for line in out_lines:
-            if line:
-                wrapped.extend(textwrap.wrap(
-                    line, width=width, break_long_words=False, break_on_hyphens=False
-                ) or [""])
+    @staticmethod
+    def Format(Cues, Paragraphs, Width):
+        """One line per cue, or paragraphs split at 1.5s+ gaps; wrapped at Width (0 = no wrap)."""
+        if kS.ErrorMode:
+            return ""
+        try:
+            if not Cues:
+                return ""
+            OutLines = []
+            if Paragraphs:
+                Paragraph = []
+                for Index, Cue in enumerate(Cues):
+                    Paragraph.append(Cue["text"])
+                    GapToNext = (Cues[Index + 1]["start"] - Cue["end"]) if Index + 1 < len(Cues) else 999
+                    if GapToNext >= 1.5:
+                        OutLines.append(" ".join(Paragraph))
+                        OutLines.append("")
+                        Paragraph = []
+                if Paragraph:
+                    OutLines.append(" ".join(Paragraph))
             else:
-                wrapped.append("")
-        out_lines = wrapped
-    return "\n".join(out_lines) + "\n"
+                for Cue in Cues:
+                    OutLines.append(Cue["text"])
+            if Width > 0:
+                Wrapped = []
+                for Line in OutLines:
+                    if Line:
+                        Wrapped.extend(textwrap.wrap(
+                            Line, width=Width, break_long_words=False, break_on_hyphens=False
+                        ) or [""])
+                    else:
+                        Wrapped.append("")
+                OutLines = Wrapped
+            return "\n".join(OutLines) + "\n"
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kScriptFormatter.Format")
+            return ""
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Strip .srt to a clean reading script.")
-    ap.add_argument("--in", dest="inp", required=True)
-    ap.add_argument("--out", default=None)
-    ap.add_argument("--paragraphs", action="store_true",
-                    help="Group cues into paragraphs at 1.5s+ gaps.")
-    ap.add_argument("--width", type=int, default=80, help="Wrap width. 0=off.")
-    args = ap.parse_args()
+class kSrtToScriptApp:
+    """Command line."""
 
-    inp = Path(args.inp)
-    if not inp.exists():
-        sys.stderr.write(f"ERROR: input not found: {inp}\n"); return 2
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
+        try:
+            Parser = argparse.ArgumentParser(description="Strip .srt to a clean reading script.")
+            Parser.add_argument("--in", dest="inp", required=True)
+            Parser.add_argument("--out", default=None)
+            Parser.add_argument("--paragraphs", action="store_true",
+                                help="Group cues into paragraphs at 1.5s+ gaps.")
+            Parser.add_argument("--width", type=int, default=80, help="Wrap width. 0=off.")
+            Args = Parser.parse_args()
 
-    cues = parse_srt(inp.read_text(encoding="utf-8"))
-    text = format_script(cues, args.paragraphs, args.width)
-
-    if args.out:
-        out = Path(args.out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(text, encoding="utf-8")
-        sys.stderr.write(f"[vedit/srt_to_script] {len(cues)} cues → {out}\n")
-    else:
-        sys.stdout.write(text)
-    return 0
+            Input = Path(Args.inp)
+            if not Input.exists():
+                raise ToolInputException(f"input not found: {Input}")
+            Cues = kSrtParser().Parse(Input.read_text(encoding="utf-8"))
+            Text = kScriptFormatter.Format(Cues, Args.paragraphs, Args.width)
+            if kS.ErrorMode:
+                return 1
+            if Args.out:
+                Out = Path(Args.out)
+                Out.parent.mkdir(parents=True, exist_ok=True)
+                Out.write_text(Text, encoding="utf-8")
+                sys.stderr.write(f"[vedit/srt_to_script] {len(Cues)} cues → {Out}\n")
+            else:
+                sys.stdout.write(Text)
+            return 0
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kSrtToScriptApp.Run")
+            return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    kRun.Main(kSrtToScriptApp)

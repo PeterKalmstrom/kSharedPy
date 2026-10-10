@@ -22,17 +22,13 @@ fixes mid-thought grammar slips — but should not add content, change meaning,
 or formalize the voice.
 """
 
-from __future__ import annotations
-
 import argparse
-import io
 import os
 import sys
 from pathlib import Path
 
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
+from kGenAi import kGenAi
+from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
 
 PROMPT = """You are cleaning up a transcript of a software tutorial recorded in one take. The speaker spoke conversationally and made the usual verbal mistakes — restarts, filler, mid-thought changes. Your job is to produce a clean reading script the speaker can re-record from.
@@ -58,60 +54,90 @@ Return ONLY the cleaned script text. No preamble, no explanation, no markdown fo
 """
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="LLM-polish a reading script.")
-    ap.add_argument("--in", dest="inp", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--model", default="gemini-2.5-flash")
-    ap.add_argument("--voice", default=(
-        "Peter Kalmström — casual tutorial first-person, "
-        "occasional 'so' / 'now' / 'let's' transitions, "
-        "instructional but warm"
-    ))
-    args = ap.parse_args()
+class kScriptPolisher:
+    """One Gemini polish of one reading script."""
 
-    inp = Path(args.inp)
-    out = Path(args.out)
-    if not inp.exists():
-        sys.stderr.write(f"ERROR: input not found: {inp}\n"); return 2
+    @staticmethod
+    def CheckPrerequisites():
+        """The API key is an expected state: missing means exit 2 (a missing google-genai is kGenAi.Load's)."""
+        if kS.ErrorMode:
+            return
+        try:
+            if "GEMINI_API_KEY" not in os.environ and "GOOGLE_API_KEY" not in os.environ:
+                raise ToolInputException("GEMINI_API_KEY (or GOOGLE_API_KEY) not set.")
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kScriptPolisher.CheckPrerequisites")
+            return
 
-    if "GEMINI_API_KEY" not in os.environ and "GOOGLE_API_KEY" not in os.environ:
-        sys.stderr.write(
-            "ERROR: GEMINI_API_KEY (or GOOGLE_API_KEY) not set.\n"
-        ); return 2
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError:
-        sys.stderr.write(
-            "ERROR: google-genai not installed.\n"
-            "Run via: uvx --with google-genai python polish_script.py ...\n"
-        ); return 2
+    @staticmethod
+    def Polish(Text, Model, Voice):
+        """The polished text; an empty answer from Gemini stops the tool (exit 2)."""
+        if kS.ErrorMode:
+            return ""
+        try:
+            genai, types, _Errors = kGenAi.Load("polish_script.py")
+            Prompt = PROMPT.format(voice=Voice, text=Text)
+            sys.stderr.write(f"[vedit/polish_script] polishing {len(Text):,} chars via {Model}…\n")
+            Client = genai.Client()
+            Response = Client.models.generate_content(
+                model=Model,
+                contents=Prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                ),
+            )
+            Polished = (Response.text or "").strip()
+            if not Polished:
+                raise ToolReportableException("empty response from Gemini.", 2)
+            return Polished
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kScriptPolisher.Polish(model={Model})")
+            return ""
 
-    text = inp.read_text(encoding="utf-8")
-    prompt = PROMPT.format(voice=args.voice, text=text)
 
-    sys.stderr.write(f"[vedit/polish_script] polishing {len(text):,} chars via {args.model}…\n")
+class kPolishScriptApp:
+    """Command line."""
 
-    client = genai.Client()
-    response = client.models.generate_content(
-        model=args.model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.2,
-        ),
-    )
-    polished = (response.text or "").strip()
-    if not polished:
-        sys.stderr.write("ERROR: empty response from Gemini.\n"); return 2
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
+        try:
+            Parser = argparse.ArgumentParser(description="LLM-polish a reading script.")
+            Parser.add_argument("--in", dest="inp", required=True)
+            Parser.add_argument("--out", required=True)
+            Parser.add_argument("--model", default="gemini-2.5-flash")
+            Parser.add_argument("--voice", default=(
+                "Peter Kalmström — casual tutorial first-person, "
+                "occasional 'so' / 'now' / 'let's' transitions, "
+                "instructional but warm"
+            ))
+            Args = Parser.parse_args()
 
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(polished + "\n", encoding="utf-8")
-    sys.stderr.write(
-        f"[vedit/polish_script] {len(text):,} → {len(polished):,} chars → {out}\n"
-    )
-    return 0
+            Input = Path(Args.inp)
+            Out = Path(Args.out)
+            if not Input.exists():
+                raise ToolInputException(f"input not found: {Input}")
+            kScriptPolisher.CheckPrerequisites()
+            Text = Input.read_text(encoding="utf-8")
+            Polished = kScriptPolisher.Polish(Text, Args.model, Args.voice)
+            if kS.ErrorMode:
+                return 1
+            Out.parent.mkdir(parents=True, exist_ok=True)
+            Out.write_text(Polished + "\n", encoding="utf-8")
+            sys.stderr.write(
+                f"[vedit/polish_script] {len(Text):,} → {len(Polished):,} chars → {Out}\n"
+            )
+            return 0
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kPolishScriptApp.Run")
+            return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    kRun.Main(kPolishScriptApp)

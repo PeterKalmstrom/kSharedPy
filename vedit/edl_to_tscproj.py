@@ -35,8 +35,6 @@ Flags:
     --quiet         Suppress progress output.
 """
 
-from __future__ import annotations
-
 import argparse
 import copy
 import json
@@ -44,249 +42,302 @@ import os
 import sys
 from pathlib import Path
 
+from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
+
 EDIT_RATE = 705_600_000  # Camtasia project ticks per second
 
 
-def to_ticks(seconds: float) -> int:
-    return round(seconds * EDIT_RATE)
+class kTscprojPatcher:
+    """Applies the keep segments of an EDL to the timeline of one Camtasia project."""
 
-
-def resolve_tscproj(path_arg: str) -> Path:
-    """Accept either the bundle directory or the inner JSON file."""
-    p = Path(path_arg)
-    if p.is_dir():
-        candidates = list(p.glob("*.tscproj"))
-        if not candidates:
-            raise FileNotFoundError(f"No .tscproj file found inside {p}")
-        return candidates[0]
-    return p
-
-
-def find_src_id(proj: dict, src_hint: str | None) -> int:
-    """Return source bin ID for the target recording."""
-    for entry in proj.get("sourceBin", []):
-        src = entry.get("src", "")
-        if src_hint:
-            if src_hint.lower() in src.lower():
-                return entry["id"]
-        elif src.lower().endswith(".trec"):
-            return entry["id"]
-    if proj.get("sourceBin"):
-        return proj["sourceBin"][0]["id"]
-    raise ValueError("No matching source found in project sourceBin")
-
-
-def max_id_in(node: object) -> int:
-    m = 0
-    if isinstance(node, dict):
-        if isinstance(node.get("id"), int):
-            m = max(m, node["id"])
-        for v in node.values():
-            m = max(m, max_id_in(v))
-    elif isinstance(node, list):
-        for item in node:
-            m = max(m, max_id_in(item))
-    return m
-
-
-def make_segment(
-    template: dict,
-    new_id: int,
-    start_t: int,
-    dur_t: int,
-    media_start_t: int,
-    speed: float = 1.0,
-) -> dict:
-    """Build a clip child (ScreenVMFile or AMFile) from a template.
-
-    For speed > 1: the source mediaDuration stays the same (we consume the same
-    amount of source), but the timeline duration shrinks by 1/speed so the clip
-    plays faster.  scalar is set to speed.  clipSpeedAttribute is enabled.
-    """
-    seg = copy.deepcopy(template)
-    seg["id"] = new_id
-    seg["start"] = start_t
-    seg["mediaDuration"] = dur_t  # source ticks consumed (unchanged)
-    seg["mediaStart"] = media_start_t
-    if speed != 1.0:
-        tl_dur = round(dur_t / speed)
-        seg["duration"] = tl_dur
-        seg["scalar"] = speed
-        if "metadata" in seg and isinstance(seg["metadata"], dict):
-            seg["metadata"]["clipSpeedAttribute"] = True
-    else:
-        seg["duration"] = dur_t
-    return seg
-
-
-def patch_tracks(proj: dict, src_id: int, keep_segs: list[dict], next_id: list[int]) -> int:
-    """For each timeline track, collapse all StitchedMedia clips that reference
-    src_id into a single new StitchedMedia with one child per EDL keep segment.
-
-    Works for both video tracks (ScreenVMFile children) and audio tracks (AMFile
-    children) — the child type is preserved from the template.
-
-    Returns the number of tracks that were patched.
-    """
-    try:
-        tracks = proj["timeline"]["sceneTrack"]["scenes"][0]["csml"]["tracks"]
-    except (KeyError, IndexError):
-        return 0
-
-    patched = 0
-    for track in tracks:
-        medias = track.get("medias", [])
-
-        # Find StitchedMedia nodes whose children reference src_id (any child type)
-        src_stitched = [
-            m for m in medias
-            if m.get("_type") == "StitchedMedia"
-            and any(c.get("src") == src_id for c in m.get("medias", []))
-        ]
-        if not src_stitched:
-            continue
-
-        # Use the first found as a structural template
-        template_sm = src_stitched[0]
-        template_child = template_sm["medias"][0]  # ScreenVMFile or AMFile
-
-        # Build one child clip per EDL keep segment
-        new_children: list[dict] = []
-        timeline_pos = 0
-        for seg in keep_segs:
-            dur_t = to_ticks(seg["end"] - seg["start"])
-            media_start_t = to_ticks(seg["start"])
-            speed = float(seg.get("speed", 1.0))
-            child = make_segment(
-                template_child, next_id[0], timeline_pos, dur_t, media_start_t, speed,
-            )
-            new_children.append(child)
-            next_id[0] += 1
-            timeline_pos += child["duration"]  # use actual timeline duration (affected by speed)
-
-        # Build the replacement StitchedMedia
-        new_sm = copy.deepcopy(template_sm)
-        new_sm["id"] = next_id[0]
-        next_id[0] += 1
-        new_sm["medias"] = new_children
-        new_sm["minMediaStart"] = new_children[0]["mediaStart"] if new_children else 0
-        new_sm["start"] = 0
-        new_sm["duration"] = timeline_pos
-        new_sm["mediaStart"] = 0
-        new_sm["mediaDuration"] = timeline_pos
-
-        # Preserve any non-source media on the same track (callouts, titles, etc.)
-        other_medias = [m for m in medias if m not in src_stitched]
-        track["medias"] = [new_sm] + other_medias
-        patched += 1
-
-    return patched
-
-
-def setup_output_bundle(
-    input_was_bundle: bool, src_bundle_dir: Path, out_path: Path, proj: dict, quiet: bool
-) -> Path:
-    """Create a bundle directory at out_path and hard-link (or symlink) media files
-    from the source bundle into it.  Returns the path of the JSON file to write.
-
-    If the input was a bare JSON file (not a bundle dir) we do nothing special.
-    """
-    if not input_was_bundle:
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        return out_path
-
-    # Output is a bundle directory: create it, JSON lives inside with the same name.
-    out_path.mkdir(parents=True, exist_ok=True)
-    out_json = out_path / out_path.name  # e.g. Foo.edited.tscproj/Foo.edited.tscproj
-
-    for entry in proj.get("sourceBin", []):
-        src_name = entry.get("src", "")
-        if not src_name or Path(src_name).is_absolute():
-            continue
-        src_file = src_bundle_dir / src_name
-        dest_file = out_path / src_name
-        if not src_file.exists() or dest_file.exists():
-            continue
+    @staticmethod
+    def ToTicks(Seconds):
+        """Seconds as Camtasia project ticks."""
+        if kS.ErrorMode:
+            return 0
         try:
-            os.link(src_file, dest_file)
-            if not quiet:
-                print(f"[vedit/edl_to_tscproj] hard-linked {src_name}", file=sys.stderr)
-        except OSError:
+            return round(Seconds * EDIT_RATE)
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kTscprojPatcher.ToTicks")
+            return 0
+
+    @staticmethod
+    def ResolveTscproj(PathArg):
+        """Accept either the bundle directory or the inner JSON file."""
+        if kS.ErrorMode:
+            return None
+        try:
+            Candidate = Path(PathArg)
+            if Candidate.is_dir():
+                Found = list(Candidate.glob("*.tscproj"))
+                if not Found:
+                    raise ToolInputException(f"No .tscproj file found inside {Candidate}")
+                return Found[0]
+            if not Candidate.exists():
+                raise ToolInputException(f"tscproj not found: {Candidate}")
+            return Candidate
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kTscprojPatcher.ResolveTscproj(path={PathArg})")
+            return None
+
+    @staticmethod
+    def FindSourceId(Project, SourceHint):
+        """Return the source bin ID of the target recording."""
+        if kS.ErrorMode:
+            return 0
+        try:
+            for Entry in Project.get("sourceBin", []):
+                Source = Entry.get("src", "")
+                if SourceHint:
+                    if SourceHint.lower() in Source.lower():
+                        return Entry["id"]
+                elif Source.lower().endswith(".trec"):
+                    return Entry["id"]
+            if Project.get("sourceBin"):
+                return Project["sourceBin"][0]["id"]
+            raise ToolInputException("No matching source found in project sourceBin")
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kTscprojPatcher.FindSourceId")
+            return 0
+
+    @staticmethod
+    def MaxIdIn(Node):
+        """The largest integer "id" anywhere in Node."""
+        if kS.ErrorMode:
+            return 0
+        try:
+            Largest = 0
+            if isinstance(Node, dict):
+                if isinstance(Node.get("id"), int):
+                    Largest = max(Largest, Node["id"])
+                for Value in Node.values():
+                    Largest = max(Largest, kTscprojPatcher.MaxIdIn(Value))
+            elif isinstance(Node, list):
+                for Item in Node:
+                    Largest = max(Largest, kTscprojPatcher.MaxIdIn(Item))
+            return Largest
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kTscprojPatcher.MaxIdIn")
+            return 0
+
+    @staticmethod
+    def MakeSegment(Template, NewId, StartTicks, DurationTicks, MediaStartTicks, Speed=1.0):
+        """Build a clip child (ScreenVMFile or AMFile) from a template.
+
+        For Speed > 1: the source mediaDuration stays the same (we consume the same
+        amount of source), but the timeline duration shrinks by 1/Speed so the clip
+        plays faster.  scalar is set to Speed.  clipSpeedAttribute is enabled.
+        """
+        if kS.ErrorMode:
+            return {}
+        try:
+            Segment = copy.deepcopy(Template)
+            Segment["id"] = NewId
+            Segment["start"] = StartTicks
+            Segment["mediaDuration"] = DurationTicks  # source ticks consumed (unchanged)
+            Segment["mediaStart"] = MediaStartTicks
+            if Speed != 1.0:
+                Segment["duration"] = round(DurationTicks / Speed)
+                Segment["scalar"] = Speed
+                if "metadata" in Segment and isinstance(Segment["metadata"], dict):
+                    Segment["metadata"]["clipSpeedAttribute"] = True
+            else:
+                Segment["duration"] = DurationTicks
+            return Segment
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kTscprojPatcher.MakeSegment")
+            return {}
+
+    @staticmethod
+    def PatchTracks(Project, SourceId, KeepSegments, NextId):
+        """For each timeline track, collapse all StitchedMedia clips that reference
+        SourceId into a single new StitchedMedia with one child per EDL keep segment.
+
+        Works for both video tracks (ScreenVMFile children) and audio tracks (AMFile
+        children) — the child type is preserved from the template. NextId is a
+        one-item list holding the next free id; it is advanced.
+
+        Returns the number of tracks that were patched.
+        """
+        if kS.ErrorMode:
+            return 0
+        try:
+            Scenes = Project.get("timeline", {}).get("sceneTrack", {}).get("scenes", [])
+            if not Scenes or "tracks" not in Scenes[0].get("csml", {}):
+                return 0  # a project without a timeline: nothing to patch (reported as a warning by the caller)
+            Tracks = Scenes[0]["csml"]["tracks"]
+            Patched = 0
+            for Track in Tracks:
+                Medias = Track.get("medias", [])
+                # StitchedMedia nodes whose children reference SourceId (any child type)
+                SourceStitched = [
+                    Media for Media in Medias
+                    if Media.get("_type") == "StitchedMedia"
+                    and any(Child.get("src") == SourceId for Child in Media.get("medias", []))
+                ]
+                if not SourceStitched:
+                    continue
+                TemplateStitched = SourceStitched[0]  # the first found is the structural template
+                TemplateChild = TemplateStitched["medias"][0]  # ScreenVMFile or AMFile
+                NewChildren = []
+                TimelinePos = 0
+                for Segment in KeepSegments:
+                    Child = kTscprojPatcher.MakeSegment(
+                        TemplateChild, NextId[0], TimelinePos,
+                        kTscprojPatcher.ToTicks(Segment["end"] - Segment["start"]),
+                        kTscprojPatcher.ToTicks(Segment["start"]), float(Segment.get("speed", 1.0)),
+                    )
+                    NewChildren.append(Child)
+                    NextId[0] += 1
+                    TimelinePos += Child["duration"]  # actual timeline duration (affected by speed)
+                NewStitched = copy.deepcopy(TemplateStitched)
+                NewStitched["id"] = NextId[0]
+                NextId[0] += 1
+                NewStitched["medias"] = NewChildren
+                NewStitched["minMediaStart"] = NewChildren[0]["mediaStart"] if NewChildren else 0
+                NewStitched["start"] = 0
+                NewStitched["duration"] = TimelinePos
+                NewStitched["mediaStart"] = 0
+                NewStitched["mediaDuration"] = TimelinePos
+                # Preserve any non-source media on the same track (callouts, titles, etc.)
+                OtherMedias = [Media for Media in Medias if Media not in SourceStitched]
+                Track["medias"] = [NewStitched] + OtherMedias
+                Patched += 1
+            return Patched
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kTscprojPatcher.PatchTracks")
+            return 0
+
+    @staticmethod
+    def LinkMedia(SourceFile, DestFile, Name, Quiet):
+        """Hard-link (or else symlink) one media file into the output bundle. When neither works the file is not
+        needed for the edit itself: a warning tells the person to copy it."""
+        if kS.ErrorMode:
+            return
+        try:
             try:
-                dest_file.symlink_to(src_file.resolve())
-                if not quiet:
-                    print(f"[vedit/edl_to_tscproj] symlinked {src_name}", file=sys.stderr)
-            except OSError as exc:
+                os.link(SourceFile, DestFile)
+                if not Quiet:
+                    print(f"[vedit/edl_to_tscproj] hard-linked {Name}", file=sys.stderr)
+                return
+            except OSError:  # ERROR-SUPPRESSED-JUSTIFIED: no hard links here (other volume, FAT) - a symlink is the corrected path
+                pass
+            try:
+                DestFile.symlink_to(SourceFile.resolve())
+                if not Quiet:
+                    print(f"[vedit/edl_to_tscproj] symlinked {Name}", file=sys.stderr)
+            except OSError as Failure:  # ERROR-SUPPRESSED-JUSTIFIED: the project is still written; the warning tells the person to copy the media by hand
                 sys.stderr.write(
-                    f"WARNING: could not link {src_name}: {exc}\n"
-                    f"  Copy it manually: {src_file} → {dest_file}\n"
+                    f"WARNING: could not link {Name}: {Failure}\n"
+                    f"  Copy it manually: {SourceFile} → {DestFile}\n"
                 )
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kTscprojPatcher.LinkMedia(file={SourceFile})")
+            return
 
-    return out_json
+    @staticmethod
+    def SetupOutputBundle(InputWasBundle, SourceBundleDir, OutPath, Project, Quiet):
+        """Create a bundle directory at OutPath and hard-link (or symlink) media files
+        from the source bundle into it.  Returns the path of the JSON file to write.
+
+        If the input was a bare JSON file (not a bundle dir) we do nothing special.
+        """
+        if kS.ErrorMode:
+            return None
+        try:
+            if not InputWasBundle:
+                OutPath.parent.mkdir(parents=True, exist_ok=True)
+                return OutPath
+            # Output is a bundle directory: create it, JSON lives inside with the same name.
+            OutPath.mkdir(parents=True, exist_ok=True)
+            OutJson = OutPath / OutPath.name  # e.g. Foo.edited.tscproj/Foo.edited.tscproj
+            for Entry in Project.get("sourceBin", []):
+                SourceName = Entry.get("src", "")
+                if not SourceName or Path(SourceName).is_absolute():
+                    continue
+                SourceFile = SourceBundleDir / SourceName
+                DestFile = OutPath / SourceName
+                if not SourceFile.exists() or DestFile.exists():
+                    continue
+                kTscprojPatcher.LinkMedia(SourceFile, DestFile, SourceName, Quiet)
+            return OutJson
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kTscprojPatcher.SetupOutputBundle(out={OutPath})")
+            return None
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(
-        description="Apply an EDL to a Camtasia .tscproj (cursor-preserving)."
-    )
-    ap.add_argument("--edl", required=True)
-    ap.add_argument("--tscproj", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--src", default=None, help="Source filename substring to target (default: first .trec)")
-    ap.add_argument("--quiet", action="store_true")
-    args = ap.parse_args()
+class kEdlToTscprojApp:
+    """Command line."""
 
-    input_was_bundle = Path(args.tscproj).is_dir()
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
+        try:
+            Parser = argparse.ArgumentParser(
+                description="Apply an EDL to a Camtasia .tscproj (cursor-preserving)."
+            )
+            Parser.add_argument("--edl", required=True)
+            Parser.add_argument("--tscproj", required=True)
+            Parser.add_argument("--out", required=True)
+            Parser.add_argument("--src", default=None,
+                                help="Source filename substring to target (default: first .trec)")
+            Parser.add_argument("--quiet", action="store_true")
+            Args = Parser.parse_args()
 
-    try:
-        tscproj_file = resolve_tscproj(args.tscproj)
-    except FileNotFoundError as e:
-        sys.stderr.write(f"ERROR: {e}\n")
-        return 2
-
-    src_bundle_dir = tscproj_file.parent
-
-    edl = json.loads(Path(args.edl).read_text(encoding="utf-8"))
-    proj = json.loads(tscproj_file.read_text(encoding="utf-8"))
-
-    keep_segs = [s for s in edl["segments"] if s["keep"]]
-    if not keep_segs:
-        sys.stderr.write("ERROR: no keep segments in EDL\n")
-        return 1
-
-    try:
-        src_id = find_src_id(proj, args.src)
-    except ValueError as e:
-        sys.stderr.write(f"ERROR: {e}\n")
-        return 2
-
-    if not args.quiet:
-        src_name = next(
-            (e["src"] for e in proj.get("sourceBin", []) if e["id"] == src_id), str(src_id)
-        )
-        total_keep_s = sum(s["end"] - s["start"] for s in keep_segs)
-        print(
-            f"[vedit/edl_to_tscproj] source bin id={src_id} ({src_name}), "
-            f"{len(keep_segs)} keep segments, {total_keep_s:.1f}s total",
-            file=sys.stderr,
-        )
-
-    next_id = [max_id_in(proj) + 1]
-    n_patched = patch_tracks(proj, src_id, keep_segs, next_id)
-
-    if n_patched == 0:
-        sys.stderr.write("WARNING: no matching tracks found — output is unchanged\n")
-    elif not args.quiet:
-        print(f"[vedit/edl_to_tscproj] patched {n_patched} track(s)", file=sys.stderr)
-
-    out_path = Path(args.out)
-    out_json = setup_output_bundle(input_was_bundle, src_bundle_dir, out_path, proj, args.quiet)
-    out_json.write_text(json.dumps(proj, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    if not args.quiet:
-        print(f"[vedit/edl_to_tscproj] wrote {out_json}", file=sys.stderr)
-    return 0
+            InputWasBundle = Path(Args.tscproj).is_dir()
+            TscprojFile = kTscprojPatcher.ResolveTscproj(Args.tscproj)
+            if kS.ErrorMode:
+                return 1
+            SourceBundleDir = TscprojFile.parent
+            EdlPath = Path(Args.edl)
+            if not EdlPath.exists():
+                raise ToolInputException(f"EDL not found: {EdlPath}")
+            Edl = json.loads(EdlPath.read_text(encoding="utf-8"))
+            Project = json.loads(TscprojFile.read_text(encoding="utf-8"))
+            KeepSegments = [Segment for Segment in Edl["segments"] if Segment["keep"]]
+            if not KeepSegments:
+                raise ToolReportableException("no keep segments in EDL")
+            SourceId = kTscprojPatcher.FindSourceId(Project, Args.src)
+            if kS.ErrorMode:
+                return 1
+            if not Args.quiet:
+                SourceName = str(SourceId)
+                for Entry in Project.get("sourceBin", []):
+                    if Entry["id"] == SourceId:
+                        SourceName = Entry["src"]
+                        break
+                TotalKeep = sum(Segment["end"] - Segment["start"] for Segment in KeepSegments)
+                print(
+                    f"[vedit/edl_to_tscproj] source bin id={SourceId} ({SourceName}), "
+                    f"{len(KeepSegments)} keep segments, {TotalKeep:.1f}s total",
+                    file=sys.stderr,
+                )
+            NextId = [kTscprojPatcher.MaxIdIn(Project) + 1]
+            Patched = kTscprojPatcher.PatchTracks(Project, SourceId, KeepSegments, NextId)
+            if kS.ErrorMode:
+                return 1
+            if Patched == 0:
+                sys.stderr.write("WARNING: no matching tracks found — output is unchanged\n")
+            elif not Args.quiet:
+                print(f"[vedit/edl_to_tscproj] patched {Patched} track(s)", file=sys.stderr)
+            OutJson = kTscprojPatcher.SetupOutputBundle(InputWasBundle, SourceBundleDir, Path(Args.out), Project,
+                                                        Args.quiet)
+            if kS.ErrorMode:
+                return 1
+            OutJson.write_text(json.dumps(Project, indent=2, ensure_ascii=False), encoding="utf-8")
+            if not Args.quiet:
+                print(f"[vedit/edl_to_tscproj] wrote {OutJson}", file=sys.stderr)
+            return 0
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kEdlToTscprojApp.Run")
+            return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    kRun.Main(kEdlToTscprojApp)
