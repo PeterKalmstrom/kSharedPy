@@ -122,6 +122,7 @@ from typing import Any
 from _transcript import kTranscript
 from kFfmpeg import kDependency, kFfmpeg
 from kGenAi import kGenAi
+from _vedit_data import kVeditData
 from kJsonFile import kJsonFile
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
@@ -1317,7 +1318,7 @@ class kProposeApp:
             # Load the transcript up front (used for both the LLM retake finder and word-snap)
             TranscriptData: dict[str, Any] | None = None
             if Args.transcript:
-                TranscriptData = kJsonFile.Load(Args.transcript, "transcript")
+                TranscriptData = kVeditData.LoadTranscript(Args.transcript)
                 if kS.ErrorMode:
                     return 1
             StartTime = time.monotonic()

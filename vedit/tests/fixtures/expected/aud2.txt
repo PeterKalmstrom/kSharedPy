@@ -1,0 +1,21 @@
+rc=0
+--- stdout
+Measured audio (a:0):
+ mean_volume_db <N>
+ max_volume_db <N>
+ integrated_lufs <N>
+ loudness_range_lu <N>
+ true_peak_db <N>
+
+Profile: clip.mp4
+Comparison:
+ mean_volume_db want <N> got <N> Δ <N> (±<N>) OK 
+ max_volume_db want <N> got <N> Δ <N> (±<N>) OK 
+ integrated_lufs want <N> got <N> Δ <N> (±<N>) OK 
+ loudness_range_lu want <N> got <N> Δ <N> (±<N>) OK 
+ true_peak_db want <N> got <N> Δ <N> (±<N>) OK 
+
+PASS — audio quality within tolerance.
+
+--- stderr
+[vedit/audio_check] measuring clip.mp4 (stream a:0)…

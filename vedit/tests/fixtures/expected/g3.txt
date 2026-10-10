@@ -1,0 +1,7 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/subtitles] polishing 3 cues via gemini-2.5-flash (104 chars)…
+[vedit/subtitles] WARNING: 1/3 cues missing from polish response; left raw.
+[vedit/subtitles] wrote 3 cues (source-timeline) → <WORK>/g3.srt

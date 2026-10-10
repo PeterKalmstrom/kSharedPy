@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any
 
 from kFfmpeg import kFfmpeg
-from kJsonFile import kJsonFile
+from _vedit_data import kVeditData
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
 
@@ -65,7 +65,7 @@ class kEdlCutter:
         if kS.ErrorMode:
             return ("", 0.0, [])
         try:
-            Data = kJsonFile.Load(EdlPath, "EDL")
+            Data = kVeditData.LoadEdl(EdlPath)
             if kS.ErrorMode:
                 return ("", 0.0, [])
             Segments = Data["segments"]

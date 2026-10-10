@@ -1,0 +1,11 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/propose] duration: <N>s
+[vedit/propose] ffmpeg silencedetect (noise=<N>dB d=<N>s)…
+[vedit/propose] ffmpeg silencedetect (noise=<N>dB d=<N>s)…
+[vedit/propose] screen-check: 6 frames × <N>s, 5 changes detected
+[vedit/propose] screen-check: 1 silence(s) preserved (screen was active during that span)
+[vedit/propose] ffmpeg freezedetect (n=<N> d=<N>s)…
+[vedit/propose] done in <T>s. 0 cut spans, <N>s (<N>% of total) → <WORK>/p3.json

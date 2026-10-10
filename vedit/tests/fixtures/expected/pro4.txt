@@ -1,0 +1,8 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/propose] duration: <N>s
+[vedit/propose] ffmpeg silencedetect (noise=<N>dB d=<N>s)…
+[vedit/propose] skipped 1 long silences (>2s) — likely demo content, not dead time
+[vedit/propose] done in <T>s. 0 cut spans, <N>s (<N>% of total) → <WORK>/p4.json

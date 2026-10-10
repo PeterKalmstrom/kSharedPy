@@ -1,0 +1,11 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/propose] duration: <N>s
+[vedit/propose] transcript-VAD: 2 silence ranges ≥<N>s from 14 words
+[vedit/propose] screen-check: 6 frames × <N>s, 0 changes detected
+[vedit/propose] screen-check: 1 long-silence span(s) kept at 1x (demo payoff, >3s)
+[vedit/propose] screen-check: 1 static-silence span(s) → 5x speed-up (<N>s source → <N>s on timeline)
+[vedit/propose] word-snap: 0 cuts → 0 after snapping to silence gaps within ±<N>s
+[vedit/propose] done in <T>s. 0 cut spans, <N>s (<N>% of total), 1 speed-up span(s) (<N>s → <N>s at 5x) → <WORK>/p8.json

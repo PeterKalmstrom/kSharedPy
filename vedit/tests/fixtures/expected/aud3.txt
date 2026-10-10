@@ -1,0 +1,23 @@
+rc=1
+--- stdout
+Measured audio (a:1):
+ mean_volume_db <N>
+ max_volume_db <N>
+ integrated_lufs <N>
+ loudness_range_lu <N>
+ true_peak_db <N>
+
+Profile: clip.mp4
+Comparison:
+ mean_volume_db want <N> got <N> Δ <N> (±<N>) FAIL
+ max_volume_db want <N> got <N> Δ <N> (±<N>) FAIL
+ integrated_lufs want <N> got <N> Δ <N> (±<N>) FAIL
+ loudness_range_lu want <N> got <N> Δ <N> (±<N>) FAIL
+ true_peak_db want <N> got <N> Δ <N> (±<N>) FAIL
+
+FAIL — audio quality outside tolerance. Refuse to process.
+ Re-record with the correct mic, or recalibrate the profile if
+ your setup has genuinely changed.
+
+--- stderr
+[vedit/audio_check] measuring clip.mp4 (stream a:1)…

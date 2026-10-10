@@ -1,0 +1,5 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/subtitles] wrote 4 cues (cut-timeline) → <WORK>/cut.srt

@@ -1,0 +1,10 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/propose] duration: <N>s
+[vedit/propose] transcript-VAD: 2 silence ranges ≥<N>s from 14 words
+[vedit/propose] audio-events: 4 vocalizations (0 throat_clear, 2 filler_sound, 2 mouth_sound)
+[vedit/propose] keep-until: dropping tail <N>s–<N>s (<N>s)
+[vedit/propose] word-snap: 3 cuts → 3 after snapping to silence gaps within ±<N>s
+[vedit/propose] done in <T>s. 5 cut spans, <N>s (<N>% of total) → <WORK>/p2.json

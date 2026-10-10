@@ -1,0 +1,24 @@
+rc=0
+--- stdout
+{
+ "version": 1,
+ "calibrated_from": "clip.mp4",
+ "baseline": {
+ "mean_volume_db": <N>,
+ "max_volume_db": <N>,
+ "integrated_lufs": <N>,
+ "loudness_range_lu": <N>,
+ "true_peak_db": <N>
+ },
+ "tolerance": {
+ "mean_volume_db": <N>,
+ "max_volume_db": <N>,
+ "integrated_lufs": <N>,
+ "true_peak_db": <N>,
+ "loudness_range_lu": <N>
+ }
+}
+
+--- stderr
+[vedit/audio_check] measuring clip.mp4 (stream a:0)…
+[vedit/audio_check] calibrated profile → <WORK>/profile.json

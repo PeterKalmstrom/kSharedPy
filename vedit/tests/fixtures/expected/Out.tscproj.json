@@ -1,0 +1,139 @@
+{
+  "title": "x",
+  "sourceBin": [
+    {
+      "id": 1,
+      "src": "intro.mp4"
+    },
+    {
+      "id": 7,
+      "src": "rec.trec"
+    }
+  ],
+  "timeline": {
+    "id": 2,
+    "sceneTrack": {
+      "scenes": [
+        {
+          "csml": {
+            "tracks": [
+              {
+                "trackIndex": 0,
+                "medias": [
+                  {
+                    "id": 34,
+                    "_type": "StitchedMedia",
+                    "start": 0,
+                    "duration": 4180680000,
+                    "medias": [
+                      {
+                        "id": 31,
+                        "_type": "ScreenVMFile",
+                        "src": 7,
+                        "start": 0,
+                        "duration": 2116800000,
+                        "mediaStart": 0,
+                        "mediaDuration": 2116800000,
+                        "metadata": {
+                          "clipSpeedAttribute": false
+                        }
+                      },
+                      {
+                        "id": 32,
+                        "_type": "ScreenVMFile",
+                        "src": 7,
+                        "start": 2116800000,
+                        "duration": 123480000,
+                        "mediaStart": 6138720000,
+                        "mediaDuration": 246960000,
+                        "metadata": {
+                          "clipSpeedAttribute": true
+                        },
+                        "scalar": 2.0
+                      },
+                      {
+                        "id": 33,
+                        "_type": "ScreenVMFile",
+                        "src": 7,
+                        "start": 2240280000,
+                        "duration": 1940400000,
+                        "mediaStart": 6526800000,
+                        "mediaDuration": 1940400000,
+                        "metadata": {
+                          "clipSpeedAttribute": false
+                        }
+                      }
+                    ],
+                    "minMediaStart": 0,
+                    "mediaStart": 0,
+                    "mediaDuration": 4180680000
+                  },
+                  {
+                    "id": 12,
+                    "_type": "Callout",
+                    "start": 0,
+                    "duration": 3
+                  }
+                ]
+              },
+              {
+                "trackIndex": 1,
+                "medias": [
+                  {
+                    "id": 38,
+                    "_type": "StitchedMedia",
+                    "medias": [
+                      {
+                        "id": 35,
+                        "_type": "AMFile",
+                        "src": 7,
+                        "start": 0,
+                        "mediaDuration": 2116800000,
+                        "mediaStart": 0,
+                        "duration": 2116800000
+                      },
+                      {
+                        "id": 36,
+                        "_type": "AMFile",
+                        "src": 7,
+                        "start": 2116800000,
+                        "mediaDuration": 246960000,
+                        "mediaStart": 6138720000,
+                        "duration": 123480000,
+                        "scalar": 2.0
+                      },
+                      {
+                        "id": 37,
+                        "_type": "AMFile",
+                        "src": 7,
+                        "start": 2240280000,
+                        "mediaDuration": 1940400000,
+                        "mediaStart": 6526800000,
+                        "duration": 1940400000
+                      }
+                    ],
+                    "minMediaStart": 0,
+                    "start": 0,
+                    "duration": 4180680000,
+                    "mediaStart": 0,
+                    "mediaDuration": 4180680000
+                  }
+                ]
+              },
+              {
+                "trackIndex": 2,
+                "medias": [
+                  {
+                    "id": 30,
+                    "_type": "VMFile",
+                    "src": 1
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

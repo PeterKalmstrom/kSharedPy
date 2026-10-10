@@ -1,0 +1,12 @@
+1
+00:00:00,200 --> 00:00:02,900
+Hello and welcome to Kalmström demo, a fairly long line that should wrap somewhere around here.
+
+2
+00:00:03,000 --> 00:00:04,000
+Second cue
+on two lines.
+
+3
+00:00:07,100 --> 00:00:09,800
+After a gap.

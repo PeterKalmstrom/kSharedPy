@@ -47,7 +47,7 @@ from typing import Any
 
 from kFfmpeg import kDependency
 from kGenAi import kGenAi
-from kJsonFile import kJsonFile
+from _vedit_data import kVeditData
 from kShared import ToolInputException, kRun, kS, kToolException
 
 
@@ -329,12 +329,12 @@ class kSubtitlesApp:
             if Format not in ("srt", "vtt"):  # checked before the paid polish call, not after it
                 raise ToolInputException(f"unsupported format '{Format}' "
                                          f"(use --format srt|vtt or .srt/.vtt extension)")
-            Transcript = kJsonFile.Load(TranscriptPath, "transcript")
+            Transcript = kVeditData.LoadTranscript(TranscriptPath)
             if kS.ErrorMode:
                 return 1
             Segments = Transcript["segments"]
             if EdlPath is not None:
-                Edl = kJsonFile.Load(EdlPath, "EDL")
+                Edl = kVeditData.LoadEdl(EdlPath)
                 if kS.ErrorMode:
                     return 1
                 KeepRanges = [(float(Segment["start"]), float(Segment["end"]))

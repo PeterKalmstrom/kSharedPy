@@ -1,0 +1,2 @@
+# The git hooks are POSIX sh: a CRLF checkout breaks them.
+kpy/hooks/* text eol=lf

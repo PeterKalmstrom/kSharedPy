@@ -1,0 +1,9 @@
+  # words  min_pt  status       title
+----------------------------------------------------------------------------------------------------
+  6     3    24pt   OK           Short slide
+  7    10    24pt   ok-tight     Tight one
+  8    20    24pt   ** AUDIT     Long slide
+  9     2    12pt   ** AUDIT     Small font
+ 11     6    24pt   [vote]       Vote
+----------------------------------------------------------------------------------------------------
+  11 slides total: 2 need audit, 1 tight, 1 ok, 1 vote, 6 skipped

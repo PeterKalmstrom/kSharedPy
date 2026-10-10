@@ -1,0 +1,8 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/edl_to_tscproj] source bin id=7 (rec.trec), 3 keep segments, 6.1s total
+[vedit/edl_to_tscproj] patched 2 track(s)
+[vedit/edl_to_tscproj] hard-linked rec.trec
+[vedit/edl_to_tscproj] wrote <WORK>/Out.tscproj/Out.tscproj

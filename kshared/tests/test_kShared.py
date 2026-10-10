@@ -24,8 +24,7 @@ sys.path.insert(0, TESTS)
 os.environ["NO_PROXY"] = "127.0.0.1,localhost"  # a system proxy must never see the local relay's traffic
 
 from kLocalRelay import kLocalRelay  # noqa: E402
-from kShared import (ToolInputException, ToolReportableException, kErrorDetail, kErrorReport,  # noqa: E402
-                     kRun, kS, kToolException)
+from kShared import kErrorDetail, kErrorReport, kS  # noqa: E402
 
 UNUSED_URL = "http://127.0.0.1:9/never-contacted"
 

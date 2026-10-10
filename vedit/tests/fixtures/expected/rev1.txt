@@ -1,0 +1,39 @@
+rc=0
+--- stdout
+# EDL review: clip.mp4
+
+- **Source:** `clip.mp4`
+- **Duration:** 00:12.00 → 00:06.10 (cut 5.9s, 49.2%)
+- **3 cuts** by category: 1 silence, 1 retake, 1 filler
+
+## Cut #1 — 00:03.00 → 00:07.00 (4.0s)
+**Reason:** silence>3s
+
+```
+  [   0.2] Hello and welcome to Kalmström demo.
+✂ [   3.0] (silence — no transcript)    ← CUT (4.0s)
+  [   7.1] wait, let me start over. The the server
+```
+
+## Cut #2 — 00:07.00 → 00:08.70 (1.7s)
+**Reason:** retake: 'wait, let me start over' [frame ok]
+
+```
+✂ [   7.0] wait, let me start over.    ← CUT
+  [  10.0] is running now.
+```
+
+## Cut #3 — 00:09.05 → 00:09.25 (0.2s)
+**Reason:** filler: the
+
+```
+✂ [   9.1] the    ← CUT
+  [  10.0] is running now.
+```
+
+---
+
+To restore a cut, edit the EDL JSON and flip its `keep` from `false` to `true`.
+Then re-run `apply.py`. The EDL is the source of truth — `review.py` is read-only.
+
+--- stderr

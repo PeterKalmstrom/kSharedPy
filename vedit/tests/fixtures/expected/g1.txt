@@ -1,0 +1,14 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/propose] duration: <N>s
+[vedit/propose] ffmpeg silencedetect (noise=<N>dB d=<N>s)…
+[vedit/propose] gemini retake-finder (gemini-2.5-flash, 124 chars of transcript)…
+[vedit/propose] validating 1 retakes with frame check…
+ ✓ <N>- <N> keep cut: stub
+[vedit/propose] frame check: 1 → 1 retakes
+[vedit/propose] gemini filler-trim (gemini-2.5-flash, 124 chars of transcript)…
+[vedit/propose] filler-trim: 1 trims proposed
+[vedit/propose] word-snap: 3 cuts → 3 after snapping to silence gaps within ±<N>s
+[vedit/propose] done in <T>s. 2 cut spans, <N>s (<N>% of total) → <WORK>/g1.json

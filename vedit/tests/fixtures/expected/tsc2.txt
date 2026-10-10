@@ -1,0 +1,7 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/edl_to_tscproj] source bin id=1 (intro.mp4), 3 keep segments, 6.1s total
+WARNING: no matching tracks found — output is unchanged
+[vedit/edl_to_tscproj] wrote <WORK>/flat.tscproj

@@ -1,0 +1,5 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/subtitles] wrote 3 cues (source-timeline) → <WORK>/forced.txt

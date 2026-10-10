@@ -1,0 +1,14 @@
+rc=0
+--- stdout
+Hello and welcome to
+Kalmström demo, a
+fairly long line
+that should wrap
+somewhere around
+here. Second cue on
+two lines.
+
+After a gap.
+
+
+--- stderr

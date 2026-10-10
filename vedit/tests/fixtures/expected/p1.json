@@ -1,0 +1,25 @@
+{
+  "source": "clip.mp4",
+  "duration_s": 12.0,
+  "version": 1,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 3.25,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "start": 3.25,
+      "end": 6.75,
+      "keep": false,
+      "reason": "silence>3s"
+    },
+    {
+      "start": 6.75,
+      "end": 12.0,
+      "keep": true,
+      "reason": ""
+    }
+  ]
+}

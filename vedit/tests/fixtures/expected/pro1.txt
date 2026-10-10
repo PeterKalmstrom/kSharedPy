@@ -1,0 +1,7 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/propose] duration: <N>s
+[vedit/propose] ffmpeg silencedetect (noise=<N>dB d=<N>s)…
+[vedit/propose] done in <T>s. 1 cut spans, <N>s (<N>% of total) → <WORK>/p1.json

@@ -1,0 +1,5 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/review] restored 1 'retake' cuts → <WORK>/restored.json

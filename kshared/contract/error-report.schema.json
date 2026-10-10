@@ -1,0 +1,23 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://kerrorrelay-pstt65n2.azurewebsites.net/contract/error-report.schema.json",
+    "title": "kErrorRelay error report (POST /api/report)",
+    "description": "THE MASTER of the error-relay payload contract. Derived from kPayloadValidator.Rules (Functions/src/relay/kPayloadValidator.ts), which stays the authority at run time; Functions/src/tests/kRelayContract.test.ts fails when the two disagree. Four places are tested against this file: the relay, kCore.KFitReport (Admin/kReusableCoreTS), kPSErrorDetail.ToPayload (Admin/kPS/lib) and kErrorDetail.ToPayload (kSharedPy, which carries a committed copy at kshared/contract/error-report.schema.json because its public CI cannot see this repo). Change this file, the Rules table and the copy together. Non-standard keywords: x-lengthUnit says how maxLength is counted (the relay counts JavaScript String.length = UTF-16 code units, NOT code points as standard JSON Schema does); x-maxBodyBytes is the relay's limit on the whole request body in UTF-8 bytes (HTTP 413 above it). Missing optional fields are forwarded as \"\" / 0.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["ProductName", "ErrorDescription"],
+    "x-maxBodyBytes": 16384,
+    "x-lengthUnit": "utf16",
+    "properties": {
+        "ProductName":      { "type": "string", "maxLength": 200, "pattern": "\\S" },
+        "ProductVersion":   { "type": "string", "maxLength": 50 },
+        "FunctionName":     { "type": "string", "maxLength": 300 },
+        "ErrorFileName":    { "type": "string", "maxLength": 260 },
+        "ErrorNumber":      { "type": "integer", "minimum": 0, "maximum": 10000000 },
+        "ErrorDescription": { "type": "string", "maxLength": 2000, "pattern": "\\S" },
+        "Comments":         { "type": "string", "maxLength": 12000 },
+        "ClientName":       { "type": "string", "maxLength": 200 },
+        "ClientEmail":      { "type": "string", "maxLength": 200, "pattern": "^$|^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$" },
+        "OSVersion":        { "type": "string", "maxLength": 200 }
+    }
+}

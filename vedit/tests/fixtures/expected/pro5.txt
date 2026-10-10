@@ -1,0 +1,8 @@
+rc=2
+--- stdout
+
+--- stderr
+[vedit/propose] duration: <N>s
+[vedit/propose] ffmpeg silencedetect (noise=<N>dB d=<N>s)…
+GEMINI_API_KEY environment variable required (get one from https://aistudio.google.com/apikey)
+ Set it in Windows user env vars or pass --no-llm to skip.

@@ -1,0 +1,5 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/srt_to_script] 3 cues → <WORK>/script_p.txt

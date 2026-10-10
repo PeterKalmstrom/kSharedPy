@@ -1,0 +1,15 @@
+  # words  min_pt  status       title
+----------------------------------------------------------------------------------------------------
+  1     1    24pt   [skip]       Cover
+  2     2    24pt   [skip]       Hosts
+  3     1    24pt   [skip]       Agenda
+  4     1    24pt   [skip]       Rules
+  5     1    24pt   [skip]       Five
+  6     3    24pt   OK           Short slide
+  7    10    24pt   [skip-Tight] Tight one
+  8    20    24pt   ** AUDIT     Long slide
+  9     2    12pt   ** AUDIT     Small font
+ 10     3    24pt   [skip-HOPP]  HOPP intro
+ 11     6    24pt   [vote]       Vote
+----------------------------------------------------------------------------------------------------
+  11 slides total: 2 need audit, 0 tight, 1 ok, 1 vote, 7 skipped

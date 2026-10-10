@@ -1,0 +1,6 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/subtitles] WARNING: GEMINI_API_KEY not set; skipping polish (raw transcript will be used). Pass --no-polish to suppress this warning.
+[vedit/subtitles] wrote 4 cues (cut-timeline) → <WORK>/nokey.srt

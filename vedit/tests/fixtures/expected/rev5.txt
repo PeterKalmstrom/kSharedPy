@@ -1,0 +1,5 @@
+rc=2
+--- stdout
+
+--- stderr
+--transcript required for review mode

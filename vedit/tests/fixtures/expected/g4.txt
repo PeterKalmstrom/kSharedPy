@@ -1,0 +1,7 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/subtitles] polishing 3 cues via gemini-2.5-flash (104 chars)…
+[vedit/subtitles] WARNING: Gemini polish failed (stub API down); using raw text.
+[vedit/subtitles] wrote 3 cues (source-timeline) → <WORK>/g4.srt

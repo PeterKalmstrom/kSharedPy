@@ -48,6 +48,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from _vedit_data import kVeditData
 from kJsonFile import kJsonFile
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
@@ -303,7 +304,7 @@ class kEdlToTscprojApp:
             if kS.ErrorMode or TscprojFile is None:
                 return 1
             SourceBundleDir = TscprojFile.parent
-            Edl = kJsonFile.Load(Args.edl, "EDL")
+            Edl = kVeditData.LoadEdl(Args.edl)
             Project = kJsonFile.Load(TscprojFile, "project")
             if kS.ErrorMode:
                 return 1

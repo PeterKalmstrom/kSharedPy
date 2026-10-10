@@ -1,0 +1,5 @@
+rc=2
+--- stdout
+
+--- stderr
+GEMINI_API_KEY environment variable required (get one from https://aistudio.google.com/apikey)

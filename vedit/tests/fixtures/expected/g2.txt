@@ -1,0 +1,13 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/propose] duration: <N>s
+[vedit/propose] ffmpeg silencedetect (noise=<N>dB d=<N>s)…
+[vedit/propose] gemini retake-finder (gemini-2.5-flash, 124 chars of transcript)…
+WARNING: Gemini returned non-JSON; treating as empty.
+ raw: not json
+[vedit/propose] gemini filler-trim (gemini-2.5-flash, 124 chars of transcript)…
+WARNING: filler pass returned non-JSON; treating as empty.
+[vedit/propose] word-snap: 1 cuts → 1 after snapping to silence gaps within ±<N>s
+[vedit/propose] done in <T>s. 1 cut spans, <N>s (<N>% of total) → <WORK>/g2.json

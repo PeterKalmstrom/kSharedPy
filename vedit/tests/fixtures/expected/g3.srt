@@ -1,0 +1,11 @@
+1
+00:00:00,200 --> 00:00:02,900
+Polished one
+
+2
+00:00:07,100 --> 00:00:09,800
+wait, let me start over. The the server
+
+3
+00:00:10,000 --> 00:00:11,500
+Polished three

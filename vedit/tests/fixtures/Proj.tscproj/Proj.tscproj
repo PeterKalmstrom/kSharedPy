@@ -1,0 +1,6 @@
+{"title":"x","sourceBin":[{"id":1,"src":"intro.mp4"},{"id":7,"src":"rec.trec"}],
+"timeline":{"id":2,"sceneTrack":{"scenes":[{"csml":{"tracks":[
+ {"trackIndex":0,"medias":[{"id":10,"_type":"StitchedMedia","start":0,"duration":5,"medias":[{"id":11,"_type":"ScreenVMFile","src":7,"start":0,"duration":5,"mediaStart":0,"mediaDuration":5,"metadata":{"clipSpeedAttribute":false}}]},{"id":12,"_type":"Callout","start":0,"duration":3}]},
+ {"trackIndex":1,"medias":[{"id":20,"_type":"StitchedMedia","medias":[{"id":21,"_type":"AMFile","src":7}]},{"id":22,"_type":"StitchedMedia","medias":[{"id":23,"_type":"AMFile","src":7}]}]},
+ {"trackIndex":2,"medias":[{"id":30,"_type":"VMFile","src":1}]}
+]}}]}}}

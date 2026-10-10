@@ -1,0 +1,5 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/review] wrote <WORK>/review_retake.md

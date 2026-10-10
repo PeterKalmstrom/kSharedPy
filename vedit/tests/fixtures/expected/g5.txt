@@ -1,0 +1,6 @@
+rc=0
+--- stdout
+
+--- stderr
+[vedit/polish_script] polishing 232 chars via gemini-2.5-flash…
+[vedit/polish_script] 232 → 81 chars → <WORK>/polished.txt

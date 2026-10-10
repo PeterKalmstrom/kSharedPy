@@ -1,0 +1,34 @@
+#!/bin/sh
+# kpy pre-commit: refuse a commit while any generated Python module is not current with the kSharedPy master.
+# Enable once per clone:   git config core.hooksPath kpy/hooks
+# Override (rarely right):  KPY_SKIP_VERIFY=1 git commit ...   or   git commit --no-verify
+# Variables: KPY_MANIFEST (default kpy.manifest.json), KPY_COMPILER (default kpy/kPyCompiler.py), KPY_PYTHON.
+
+[ "${KPY_SKIP_VERIFY:-}" = "1" ] && exit 0
+
+Manifest="${KPY_MANIFEST:-kpy.manifest.json}"
+Compiler="${KPY_COMPILER:-kpy/kPyCompiler.py}"
+[ -f "$Manifest" ] || exit 0
+
+Python="${KPY_PYTHON:-}"
+if [ -z "$Python" ]; then
+    for Candidate in _scratch/venv/Scripts/python.exe python3 python py; do
+        if command -v "$Candidate" >/dev/null 2>&1; then Python="$Candidate"; break; fi
+    done
+fi
+if [ -z "$Python" ]; then
+    echo "kpy pre-commit: no python found, cannot verify the generated modules (set KPY_PYTHON)." >&2
+    exit 1
+fi
+
+Output=$("$Python" "$Compiler" --manifest "$Manifest" --action verify 2>&1)
+Code=$?
+[ $Code -eq 0 ] && exit 0
+
+echo "$Output" | grep -v '^current ' >&2
+echo "" >&2
+echo "kpy pre-commit: COMMIT REFUSED - generated Python modules are not current with the kSharedPy master (exit $Code)." >&2
+echo "Re-compile, stage the outputs and commit again:" >&2
+echo "    python $Compiler --manifest $Manifest --action compile" >&2
+echo "(an 'edited' output holds a hand change: port it into the master first, then add --adopt)" >&2
+exit 1
