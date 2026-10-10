@@ -114,6 +114,6 @@ direction, and consistency.
 
 - [`kSharedPy/gemini/batch_image_gen.py`](../gemini/batch_image_gen.py) —
   companion image helper, same API style.
-- [`configuring-powerpoint-mcp` SKILL.md](../../AgentInstruction/skills/configuring-powerpoint-mcp/SKILL.md)
-  `## Veo Integration` section — full prompting guide and PowerPoint
-  embedding examples.
+- The `building-powerpoint-decks` skill
+  ([PeterKalmstrom/claude-powerpoint-skill](https://github.com/PeterKalmstrom/claude-powerpoint-skill)),
+  `reference/MEDIA.md` — Veo prompting and PowerPoint embedding.

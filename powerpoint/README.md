@@ -4,7 +4,7 @@ Standalone Python utilities for PowerPoint decks via COM automation. Reusable
 from any project that needs to read, audit, or analyze .pptx files
 programmatically — no MCP server required.
 
-These scripts pair naturally with `configuring-powerpoint-mcp` and `auditing-decks`
+These scripts pair naturally with `building-powerpoint-decks` and `auditing-decks`
 skills, but stand alone for use in pipelines, CI, or one-off analysis.
 
 **Related skills (under `X:\Source\Admin\AgentInstruction\skills\`):**
@@ -12,8 +12,8 @@ skills, but stand alone for use in pipelines, CI, or one-off analysis.
   plus the `auditing-taste` codes to produce a punch list of slide defects.
 - `presenting-prep` — pre-delivery prep (timing markers, panic sheet, handout,
   contact sheet) that runs after the audit returns clean.
-- `configuring-powerpoint-mcp` — the COM patterns and iteration workflow these
-  tools plug into. See its `## Workflow` section.
+- `building-powerpoint-decks` — the deck builder these helpers come from (public:
+  PeterKalmstrom/claude-powerpoint-skill); its `reference/COM.md` holds the COM patterns.
 
 ## Requirements
 
