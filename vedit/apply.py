@@ -109,7 +109,9 @@ class kEdlCutter:
     def BuildFilterComplex(Ranges: list[tuple[float, float]], AudioSource: str, AudioFadeSeconds: float = 0.030,
                            Fps: float = 30.0) -> str:
         """AudioSource is the filter-graph label for the audio source — e.g.
-        "[0:a:0]" for stream 0, or "[amix]" if upstream amerged the streams.
+        "[0:a:0]" for stream 0 (an input stream may be read by every segment), or "[amix{Index}]" for one
+        asplit copy per segment of the mixed streams: a FILTER output can be read only once (ffmpeg 6.1 refuses
+        one "[amix]" read by several segments with "Invalid stream specifier"; 8.1 accepted the graph).
 
         AudioFadeSeconds adds a per-segment fade-in/fade-out on the audio to suppress
         click/pop artifacts at cut boundaries. If a segment is shorter than
@@ -128,7 +130,8 @@ class kEdlCutter:
             for Index, (Start, End) in enumerate(Ranges):
                 Duration = End - Start
                 Parts.append(f"[0:v]trim=start={Start:.3f}:end={End:.3f},setpts=PTS-STARTPTS[v{Index}]")
-                AudioChain = f"{AudioSource}atrim=start={Start:.3f}:end={End:.3f},asetpts=PTS-STARTPTS"
+                Source = AudioSource.replace("{Index}", str(Index))
+                AudioChain = f"{Source}atrim=start={Start:.3f}:end={End:.3f},asetpts=PTS-STARTPTS"
                 if AudioFadeSeconds > 0 and Duration > 2 * AudioFadeSeconds + 0.01:
                     AudioChain += (f",afade=t=in:st=0:d={AudioFadeSeconds:.3f}"
                                    f",afade=t=out:st={Duration - AudioFadeSeconds:.3f}:d={AudioFadeSeconds:.3f}")
@@ -168,11 +171,14 @@ class kEdlCutter:
             if not Ranges:
                 raise ToolReportableException("no keep ranges in EDL — nothing to output.")
             if MixAudio and AudioStreamCount > 1:
-                # amerge all audio streams, then feed into the trim/concat chain
-                AmergeInputs = "".join(f"[0:a:{Index}]" for Index in range(AudioStreamCount))
-                Prefix = f"{AmergeInputs}amerge=inputs={AudioStreamCount}[amix]"
-                FilterComplex = Prefix + ";\n" + kEdlCutter.BuildFilterComplex(Ranges, "[amix]", AudioFadeSeconds,
-                                                                               Fps)
+                # amix (not amerge: amerge puts each stream on its own channel) all audio streams into one track,
+                # then asplit one copy per segment for the trim/concat chain
+                MixInputs = "".join(f"[0:a:{Index}]" for Index in range(AudioStreamCount))
+                Copies = "".join(f"[amix{Index}]" for Index in range(len(Ranges)))
+                Prefix = (f"{MixInputs}amix=inputs={AudioStreamCount}:duration=longest,"
+                          f"asplit={len(Ranges)}{Copies}")
+                FilterComplex = Prefix + ";\n" + kEdlCutter.BuildFilterComplex(Ranges, "[amix{Index}]",
+                                                                               AudioFadeSeconds, Fps)
             else:
                 FilterComplex = kEdlCutter.BuildFilterComplex(Ranges, f"[0:a:{AudioStream}]", AudioFadeSeconds, Fps)
             if kS.ErrorMode:
