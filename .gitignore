@@ -1,0 +1,5 @@
+_scratch/
+__pycache__/
+*.py[cod]
+*.tmp.*
+.venv/
