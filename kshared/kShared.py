@@ -1,7 +1,7 @@
 """Shared error handling for every Python file in a kalmstrom product (any OS, standard library only).
 
-MASTER: X:\\Source\\Admin\\kSharedPy\\kshared\\kShared.py. A product receives a generated copy from kpy/kPyCompiler.py;
-the lines marked "kpy:setting <Name>" take the values in the product's kpy.manifest.json.
+MASTER: kshared/kShared.py in https://github.com/PeterKalmstrom/kSharedPy. A product receives a generated copy
+from kpy/kPyCompiler.py; the lines marked "kpy:setting <Name>" take the values in the product's kpy.manifest.json.
 
 The rules, the same as the C#, TypeScript and PowerShell code of the same author:
 

@@ -272,7 +272,8 @@ class kPyCompilerApp:
             if Args.action == "verify" and Problems:
                 raise ToolReportableException(
                     f"{Problems} generated module(s) are not current. The master is kSharedPy "
-                    "(X:\\Source\\Admin\\kSharedPy); change it there and recompile.", EXIT_VERIFY_FAILED)
+                    "(https://github.com/PeterKalmstrom/kSharedPy); change it there and recompile.",
+                    EXIT_VERIFY_FAILED)
             return 0
         except kToolException:
             raise
