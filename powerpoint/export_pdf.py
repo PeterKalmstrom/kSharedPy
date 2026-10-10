@@ -1,174 +1,88 @@
-"""
-Export a PowerPoint deck as PDF — slides, notes pages, or handouts.
+"""PDF export via ExportAsFixedFormat: speaker handout (slide + notes per page), audience
+handout (N-up), or plain slides.
 
-Use for the speaker handout (notes-pages PDF) or for sending the deck to
-someone without PowerPoint. Wraps the COM `ExportAsFixedFormat` call so
-you don't have to look up the magic constants.
-
-Usage:
-    # Default: slides PDF next to the deck
-    python export_pdf.py --file deck.pptx
-
-    # Speaker handout (notes pages — slide image on top, notes below)
-    python export_pdf.py --file deck.pptx --mode notes --out C:\\out\\handout.pdf
-
-    # Audience handout (6-up grid, two columns)
-    python export_pdf.py --file deck.pptx --mode handout --slides-per-page 6
-
-    # Range only
-    python export_pdf.py --file deck.pptx --start 1 --end 20
-
-Modes:
-    slides   — one slide per page (default; for sending the deck around)
-    notes    — slide thumbnail + speaker notes per page (the speaker handout)
-    handout  — multiple slides per page in a grid (for audience print-outs)
-
-Run via uvx:
     uvx --with pywin32 python export_pdf.py --file deck.pptx --mode notes
+    uvx --with pywin32 python export_pdf.py --file deck.pptx --mode handout --slides-per-page 6
 
-Notes:
-    - The deck does NOT need to be open in PowerPoint; this opens it
-      read-only without a window.
-    - Uses Print intent (higher fidelity than Screen). Embeds fonts.
+pywin32 trap (runtime-confirmed 2026-10-07): calling ExportAsFixedFormat positionally lets pywin32
+fill the optional PrintRange argument itself, and PowerPoint rejects it with "TypeError: The Python
+instance can not be converted to a COM object". Pass a real PrintRange object from
+PrintOptions.Ranges and name every argument. If that still fails, slides mode falls back to
+SaveCopyAs(path, 32) (ppSaveAsPDF); notes and handout modes have no such fallback.
 """
-
 import argparse
-import io
+import os
 import sys
-from pathlib import Path
 
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+from _ppt import kPpt, kPptSession
+from kShared import ToolReportableException, kRun, kS, kToolException
 
-try:
-    import win32com.client
-    import pythoncom
-except ImportError:
-    sys.stderr.write(
-        "pywin32 not installed. Run with:\n"
-        "  uvx --with pywin32 python export_pdf.py [args]\n"
-    )
-    sys.exit(1)
+HANDOUT = {1: 10, 2: 2, 3: 3, 4: 8, 6: 4, 9: 9}  # slides/page -> ppPrintOutputType
+PP_FIXED_FORMAT_PDF, PP_INTENT_PRINT, PP_PRINT_ALL, PP_SAVE_AS_PDF = 2, 2, 1, 32
 
 
-# PpFixedFormatType
-FIXED_PDF = 2
-# PpFixedFormatIntent
-INTENT_PRINT = 2
-# PpPrintOutputType
-OUTPUT_SLIDES = 1
-OUTPUT_NOTES = 5
-OUTPUT_HANDOUTS = {
-    1: 9,   # ppPrintOutputOneSlideHandouts
-    2: 7,   # ppPrintOutputTwoSlideHandouts
-    3: 8,   # ppPrintOutputThreeSlideHandouts
-    4: 2,   # ppPrintOutputFourSlideHandouts
-    6: 3,   # ppPrintOutputSixSlideHandouts
-    9: 4,   # ppPrintOutputNineSlideHandouts
-}
-# PpPrintRangeType
-RANGE_ALL = 1
-RANGE_SLIDES = 4
+class kPdfExporter:
+    """One PDF export of one deck."""
 
-
-def export(file_path, out_path, mode, slides_per_page, start, end):
-    pythoncom.CoInitialize()
-    try:
+    @staticmethod
+    def Export(Path, Out, Mode, OutputType):
+        """Write the PDF; returns how it was written ("ExportAsFixedFormat" or the fallback note)."""
+        if kS.ErrorMode:
+            return ""
         try:
-            app = win32com.client.GetActiveObject("PowerPoint.Application")
-        except pythoncom.com_error:
-            app = win32com.client.Dispatch("PowerPoint.Application")
-            app.Visible = True
+            Method = ""
+            with kPptSession(Path) as Pres:
+                if Pres is None:
+                    return ""
+                try:
+                    Ranges = Pres.PrintOptions.Ranges
+                    Ranges.ClearAll()
+                    PrintRange = Ranges.Add(1, Pres.Slides.Count)
+                    Pres.ExportAsFixedFormat(
+                        Path=Out, FixedFormatType=PP_FIXED_FORMAT_PDF, Intent=PP_INTENT_PRINT,
+                        FrameSlides=0, HandoutOrder=1, OutputType=OutputType, PrintHiddenSlides=0,
+                        PrintRange=PrintRange, RangeType=PP_PRINT_ALL)
+                    Method = "ExportAsFixedFormat"
+                except Exception as Failure:  # ERROR-SUPPRESSED-JUSTIFIED: the pywin32 PrintRange trap - slides mode is corrected by SaveCopyAs, other modes are reported
+                    if Mode != "slides":
+                        raise ToolReportableException(f"ExportAsFixedFormat failed for {Mode} mode: {Failure}")
+                    Pres.SaveCopyAs(Out, PP_SAVE_AS_PDF)
+                    Method = f"SaveCopyAs fallback (ExportAsFixedFormat failed: {Failure})"
+            return Method
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kPdfExporter.Export(file={Path}, mode={Mode})")
+            return ""
 
-        file_norm = file_path.replace("/", "\\").lower()
-        target = None
-        for pr in app.Presentations:
-            if pr.FullName.replace("/", "\\").lower() == file_norm:
-                target = pr
-                break
-        opened = False
-        if target is None:
-            target = app.Presentations.Open(file_path, ReadOnly=True, WithWindow=False)
-            opened = True
 
+class kExportPdfApp:
+    """Command line."""
+
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
         try:
-            if mode == "slides":
-                output_type = OUTPUT_SLIDES
-            elif mode == "notes":
-                output_type = OUTPUT_NOTES
-            elif mode == "handout":
-                if slides_per_page not in OUTPUT_HANDOUTS:
-                    raise ValueError(
-                        f"--slides-per-page must be one of "
-                        f"{sorted(OUTPUT_HANDOUTS)}; got {slides_per_page}")
-                output_type = OUTPUT_HANDOUTS[slides_per_page]
-            else:
-                raise ValueError(f"Unknown mode: {mode}")
-
-            kwargs = dict(
-                Path=out_path,
-                FixedFormatType=FIXED_PDF,
-                Intent=INTENT_PRINT,
-                FrameSlides=False,
-                HandoutOrder=1,  # horizontal first (irrelevant for slides/notes)
-                OutputType=output_type,
-                PrintHiddenSlides=False,
-                PrintRange=None,
-                RangeType=RANGE_ALL,
-                IncludeDocProperties=False,
-                KeepIRMSettings=True,
-                DocStructureTags=True,
-                BitmapMissingFonts=True,
-                UseISO19005_1=False,
-            )
-            if start or end:
-                first = start or 1
-                last = end or target.Slides.Count
-                pr = target.PrintOptions.Ranges.Add(first, last)
-                kwargs["PrintRange"] = pr
-                kwargs["RangeType"] = RANGE_SLIDES
-
-            target.ExportAsFixedFormat(**kwargs)
-        finally:
-            if opened:
-                target.Close()
-    finally:
-        pythoncom.CoUninitialize()
-
-
-def main():
-    p = argparse.ArgumentParser(
-        description="Export a PowerPoint deck as PDF.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    p.add_argument("--file", required=True, help="Path to .pptx")
-    p.add_argument("--out", help="Output PDF path (default: <deck>.<mode>.pdf)")
-    p.add_argument("--mode", choices=["slides", "notes", "handout"],
-                   default="slides", help="Layout mode (default slides)")
-    p.add_argument("--slides-per-page", type=int, default=6,
-                   help="Slides per page when --mode handout (1,2,3,4,6,9)")
-    p.add_argument("--start", type=int, default=None, help="First slide")
-    p.add_argument("--end", type=int, default=None, help="Last slide")
-    p.add_argument("--quiet", action="store_true", help="Suppress success output")
-    args = p.parse_args()
-
-    file_path = str(Path(args.file).resolve())
-    if args.out:
-        out_path = str(Path(args.out).resolve())
-    else:
-        suffix = {"slides": "", "notes": ".notes", "handout": ".handout"}[args.mode]
-        out_path = str(Path(file_path).with_suffix("").as_posix() + suffix + ".pdf")
-        out_path = str(Path(out_path).resolve())
-
-    export(file_path, out_path, args.mode, args.slides_per_page,
-           args.start, args.end)
-
-    if not args.quiet:
-        size_kb = Path(out_path).stat().st_size / 1024
-        print(f"Wrote {out_path} ({size_kb:.0f} KB)")
+            Parser = argparse.ArgumentParser()
+            Parser.add_argument("--file", required=True)
+            Parser.add_argument("--mode", choices=["slides", "notes", "handout"], default="notes")
+            Parser.add_argument("--slides-per-page", type=int, default=6, choices=sorted(HANDOUT))
+            Parser.add_argument("--out")
+            Args = Parser.parse_args()
+            OutputType = {"slides": 1, "notes": 5}.get(Args.mode) or HANDOUT[Args.slides_per_page]
+            Out = kPpt.Norm(Args.out or f"{os.path.splitext(Args.file)[0]}.{Args.mode}.pdf")
+            Method = kPdfExporter.Export(Args.file, Out, Args.mode, OutputType)
+            if kS.ErrorMode:
+                return 1
+            print(Out)
+            print(f"method: {Method}", file=sys.stderr)
+            return 0
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kExportPdfApp.Run")
+            return 1
 
 
 if __name__ == "__main__":
-    main()
+    kRun.Main(kExportPdfApp)

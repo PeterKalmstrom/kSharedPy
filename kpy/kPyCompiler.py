@@ -96,7 +96,7 @@ class kPyModule:
 
     def ApplySettings(self, Part, Text):
         """Replace the value of each assignment whose line carries "# kpy:setting <Name>" that the manifest sets.
-        Returns the new text and the names applied. A value must be a str, int, float or bool."""
+        Returns the new text and the names applied. A value must be a str, int, float, bool or a list of str."""
         if kS.ErrorMode:
             return Text, set()
         try:
@@ -109,12 +109,14 @@ class kPyModule:
                 if not Match or Match.group(1) not in self.Settings:
                     continue
                 Name, Value = Match.group(1), self.Settings[Match.group(1)]
-                if not isinstance(Value, (str, int, float, bool)):
-                    raise ToolInputException(f"{self.Out}: setting {Name} must be text, a number or true/false")
+                IsTextList = isinstance(Value, list) and all(isinstance(Item, str) for Item in Value)
+                if not isinstance(Value, (str, int, float, bool)) and not IsTextList:
+                    raise ToolInputException(f"{self.Out}: setting {Name} must be text, a number, true/false "
+                                             "or a list of text")
                 if Node.value.lineno != Node.value.end_lineno:
                     raise ToolInputException(f"{Part}:{Node.lineno}: a kpy:setting value must be on one line")
                 Line = Lines[Node.value.lineno - 1]
-                Literal = json.dumps(Value, ensure_ascii=False) if isinstance(Value, str) else repr(Value)
+                Literal = json.dumps(Value, ensure_ascii=False) if isinstance(Value, (str, list)) else repr(Value)
                 Lines[Node.value.lineno - 1] = (Line[:Node.value.col_offset] + Literal
                                                 + Line[Node.value.end_col_offset:])
                 Applied.add(Name)

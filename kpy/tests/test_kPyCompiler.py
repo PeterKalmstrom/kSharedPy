@@ -111,6 +111,15 @@ class kPyCompilerTests(unittest.TestCase):
         self.assertEqual(Result.returncode, 1)
         self.assertIn("not-generated", Result.stderr)
 
+    def test_list_setting_and_bad_type(self):
+        self.WriteManifest({"Out": "scripts/kThing.py", "Parts": ["kshared/kThing.py"],
+                            "Settings": {"Product": ["a", "b"]}})
+        self.assertEqual(self.Compiler("--action", "compile").returncode, 0)
+        self.assertIn('Product = ["a", "b"]  # kpy:setting Product', self.Output())
+        self.WriteManifest({"Out": "scripts/kThing.py", "Parts": ["kshared/kThing.py"],
+                            "Settings": {"Product": {"a": 1}}})
+        self.assertEqual(self.Compiler().returncode, 2)
+
     def test_unknown_setting_is_bad_input(self):
         self.WriteManifest({"Out": "scripts/kThing.py", "Parts": ["kshared/kThing.py"], "Settings": {"Nope": 1}})
         Result = self.Compiler()

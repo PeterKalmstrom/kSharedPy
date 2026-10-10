@@ -1,0 +1,15 @@
+{
+    "Product":    "kSharedPy",
+    "//":         "kSharedPy's own folders run their scripts in place (other skills call X:/Source/Admin/kSharedPy/<folder>/*.py), so each folder gets generated copies of the kshared master beside it. Recompile after changing kshared/: python kpy/kPyCompiler.py --manifest kpy.manifest.json --action compile",
+    "SharedRoot": ".",
+    "Modules": [
+        { "Out": "powerpoint/kShared.py",           "Parts": [ "kshared/kShared.py" ] },
+        { "Out": "powerpoint/send_error_report.py", "Parts": [ "kshared/send_error_report.py" ] },
+        { "Out": "gemini/kShared.py",               "Parts": [ "kshared/kShared.py" ] },
+        { "Out": "gemini/send_error_report.py",     "Parts": [ "kshared/send_error_report.py" ] },
+        { "Out": "veo/kShared.py",                  "Parts": [ "kshared/kShared.py" ] },
+        { "Out": "veo/send_error_report.py",        "Parts": [ "kshared/send_error_report.py" ] },
+        { "Out": "vedit/kShared.py",                "Parts": [ "kshared/kShared.py" ] },
+        { "Out": "vedit/send_error_report.py",      "Parts": [ "kshared/send_error_report.py" ] }
+    ]
+}

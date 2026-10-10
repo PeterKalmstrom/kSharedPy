@@ -1,0 +1,82 @@
+"""Render every slide to JPEG through PowerPoint's own Save As JPEG.
+
+Use this, not Slide.Export: Slide.Export draws a FALLBACK
+font for embedded-but-not-installed fonts, which hides real mid-word line breaks.
+SaveCopyAs never rebinds the open presentation.
+
+    uvx --with pywin32 python render_slides.py --file deck.pptx --out renders/
+    -> renders/s001.jpg .. sNNN.jpg
+"""
+import argparse
+import os
+import shutil
+import tempfile
+
+from _ppt import kPpt, kPptSession
+from kShared import kRun, kS, kToolException
+
+PP_SAVE_AS_JPG = 17
+
+
+class kSlideRenderer:
+    """PowerPoint Save As JPEG, renamed to s001.jpg ..."""
+
+    @staticmethod
+    def Render(Path, OutDir):
+        """Render every slide of Path into OutDir. Returns the JPEG paths."""
+        if kS.ErrorMode:
+            return []
+        try:
+            OutDir = kPpt.Norm(OutDir)
+            os.makedirs(OutDir, exist_ok=True)
+            Temp = tempfile.mkdtemp(prefix="pptrender-")
+            Count = 0
+            with kPptSession(Path) as Pres:
+                if Pres is None:
+                    return []
+                Count = Pres.Slides.Count
+                Pres.SaveCopyAs(os.path.join(Temp, "saveas"), PP_SAVE_AS_JPG)  # folder of SlideN.JPG
+            Source = os.path.join(Temp, "saveas")
+            Names = os.listdir(Source)
+            Files = []
+            for Index in range(1, Count + 1):
+                Found = next((Name for Name in Names if Name.lower() == f"slide{Index}.jpg"), None)
+                if Found is None:
+                    raise RuntimeError(f"slide {Index} missing from Save As JPEG output")
+                Destination = os.path.join(OutDir, f"s{Index:03d}.jpg")
+                shutil.move(os.path.join(Source, Found), Destination)
+                Files.append(Destination)
+            shutil.rmtree(Temp, ignore_errors=True)  # a leftover temp folder is harmless
+            if len(Files) != Count:
+                raise RuntimeError(f"{len(Files)} JPEG(s) for {Count} slide(s)")
+            return Files
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kSlideRenderer.Render(file={Path})")
+            return []
+
+
+class kRenderSlidesApp:
+    """Command line."""
+
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
+        try:
+            Parser = argparse.ArgumentParser()
+            Parser.add_argument("--file", required=True)
+            Parser.add_argument("--out", default="renders")
+            Args = Parser.parse_args()
+            for File in kSlideRenderer.Render(Args.file, Args.out):
+                print(File)
+            return 0
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kRenderSlidesApp.Run")
+            return 1
+
+
+if __name__ == "__main__":
+    kRun.Main(kRenderSlidesApp)
