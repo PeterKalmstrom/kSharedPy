@@ -12,8 +12,12 @@ import ast
 import os
 import re
 import sys
-import tomllib
 import unittest
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10: tomllib arrived in 3.11; the 3.12 CI leg runs these tests
+    tomllib = None  # type: ignore[assignment]
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCRIPT_FOLDERS = ["gemini", "veo", "vedit", "powerpoint", "kpy"]
@@ -158,6 +162,7 @@ class kScriptScanner:
         return Needed, Unmapped
 
 
+@unittest.skipIf(tomllib is None, "reading PEP 723 headers needs tomllib (Python 3.11+)")
 class kDependencyHeaderTests(unittest.TestCase):
 
     def test_ScriptsAreFound(self):

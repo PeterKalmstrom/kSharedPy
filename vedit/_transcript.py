@@ -1,4 +1,6 @@
 """Transcript helpers shared by the vedit scripts (propose.py, review.py)."""
+from typing import Any
+
 from kShared import kS
 
 
@@ -6,7 +8,7 @@ class kTranscript:
     """Read text out of a faster-whisper transcript (a list of segments with optional word timestamps)."""
 
     @staticmethod
-    def WordsInside(TranscriptSegments, Start, End):
+    def WordsInside(TranscriptSegments: list[dict[str, Any]], Start: float, End: float) -> str:
         """The words whose midpoints fall within [Start, End], from word-level timestamps; falls back to the whole
         text of the segments that overlap the span when the transcript has no words."""
         if kS.ErrorMode:

@@ -30,6 +30,10 @@ installs them on demand.
 - UTF-8 stdout forced (Windows safe)
 - Each script's docstring documents flags, environment, and gotchas
 - Long-output scripts support `--quiet` for use inside larger pipelines (errors still go to stderr)
+- The masters carry type hints (Python 3.10 syntax) and are checked with `mypy` from the repo root (`mypy.ini`
+  excludes the generated copies, so each module is checked once, from its master). CI
+  (`.github/workflows/check.yml`, Python 3.10 and 3.12 on Linux) runs check_kpattern, `kPyCompiler --action verify`,
+  mypy, pyflakes and the kshared, kpy and powerpoint test suites
 
 ## Quick start from another script
 

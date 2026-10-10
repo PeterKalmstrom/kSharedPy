@@ -58,6 +58,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from kFfmpeg import kFfmpeg
 from kJsonFile import kJsonFile
@@ -79,7 +80,7 @@ class kAudioMeter:
     """ffmpeg loudness probes of one audio stream."""
 
     @staticmethod
-    def RunFilter(Input, AudioStream, Filter, Name):
+    def RunFilter(Input: Path, AudioStream: int, Filter: str, Name: str) -> str:
         """Run ffmpeg with an analysis filter and return its stderr. ffmpeg refusing the stream (no such audio
         stream, unreadable file) is an expected state: its output is shown and the tool stops (exit 1)."""
         if kS.ErrorMode:
@@ -104,7 +105,7 @@ class kAudioMeter:
             return ""
 
     @staticmethod
-    def ProbeVolume(Input, AudioStream):
+    def ProbeVolume(Input: Path, AudioStream: int) -> dict[str, float]:
         """Run ffmpeg volumedetect, parse mean/max volume from stderr."""
         if kS.ErrorMode:
             return {}
@@ -127,7 +128,7 @@ class kAudioMeter:
             return {}
 
     @staticmethod
-    def ToFloat(Text):
+    def ToFloat(Text: str) -> float:
         """A parsed level as a float; "-inf" is minus infinity."""
         if kS.ErrorMode:
             return 0.0
@@ -138,7 +139,7 @@ class kAudioMeter:
             return 0.0
 
     @staticmethod
-    def ProbeEbur128(Input, AudioStream):
+    def ProbeEbur128(Input: Path, AudioStream: int) -> dict[str, float]:
         """Run ffmpeg ebur128, parse integrated loudness / LRA / true peak."""
         if kS.ErrorMode:
             return {}
@@ -168,12 +169,12 @@ class kAudioMeter:
             return {}
 
     @staticmethod
-    def Measure(Input, AudioStream):
+    def Measure(Input: Path, AudioStream: int) -> dict[str, float]:
         """All five metrics of one audio stream."""
         if kS.ErrorMode:
             return {}
         try:
-            Metrics = {}
+            Metrics: dict[str, float] = {}
             Metrics.update(kAudioMeter.ProbeVolume(Input, AudioStream))
             Metrics.update(kAudioMeter.ProbeEbur128(Input, AudioStream))
             return Metrics
@@ -184,7 +185,7 @@ class kAudioMeter:
             return {}
 
     @staticmethod
-    def CheckAgainst(Metrics, Profile):
+    def CheckAgainst(Metrics: dict[str, float], Profile: dict[str, Any]) -> tuple[bool, list[str]]:
         """Return (passed, report_rows) for the metrics against a calibrated profile."""
         if kS.ErrorMode:
             return (False, [])
@@ -219,7 +220,7 @@ class kAudioCheckApp:
     """Command line."""
 
     @staticmethod
-    def Calibrate(Input, Metrics, ToleranceDb, ProfileOut):
+    def Calibrate(Input: Path, Metrics: dict[str, float], ToleranceDb: float | None, ProfileOut: str) -> int:
         """Write the profile built from Metrics to ProfileOut and print it."""
         if kS.ErrorMode:
             return 1
@@ -244,7 +245,7 @@ class kAudioCheckApp:
             return 1
 
     @staticmethod
-    def Check(Metrics, ProfilePath):
+    def Check(Metrics: dict[str, float], ProfilePath: str) -> int:
         """Print the comparison with the profile: 0 PASS, 1 FAIL."""
         if kS.ErrorMode:
             return 1
@@ -274,7 +275,7 @@ class kAudioCheckApp:
             kS.GlobalErrorHandler(e, f"kAudioCheckApp.Check(profile={ProfilePath})")
             return 1
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

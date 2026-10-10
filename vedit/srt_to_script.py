@@ -26,6 +26,7 @@ import re
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any
 
 from kShared import ToolInputException, kRun, kS, kToolException
 
@@ -37,16 +38,16 @@ TIMESTAMP_PATTERN = re.compile(
 class kSrtParser:
     """Reads the cues of one .srt text: [{start, end, text}, ...]."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         try:
-            self.Cues = []
-            self.Current = None
-            self.Lines = []
+            self.Cues: list[dict[str, Any]] = []
+            self.Current: dict[str, Any] | None = None
+            self.Lines: list[str] = []
         except Exception as e:
             kS.GlobalErrorHandler(e, "kSrtParser.__init__")
 
     @staticmethod
-    def ToSeconds(Hours, Minutes, Seconds, Milliseconds):
+    def ToSeconds(Hours: str, Minutes: str, Seconds: str, Milliseconds: str) -> float:
         """One SRT timestamp's parts as seconds."""
         if kS.ErrorMode:
             return 0.0
@@ -56,7 +57,7 @@ class kSrtParser:
             kS.GlobalErrorHandler(e, "kSrtParser.ToSeconds")
             return 0.0
 
-    def Flush(self):
+    def Flush(self) -> None:
         """Close the current cue: keep it when it has text, then start over."""
         if kS.ErrorMode:
             return
@@ -70,7 +71,7 @@ class kSrtParser:
             kS.GlobalErrorHandler(e, "kSrtParser.Flush")
             return
 
-    def Parse(self, Text):
+    def Parse(self, Text: str) -> list[dict[str, Any]]:
         """Return the list of cues in Text."""
         if kS.ErrorMode:
             return []
@@ -103,7 +104,7 @@ class kScriptFormatter:
     """Turns cues into reading-script text."""
 
     @staticmethod
-    def Format(Cues, Paragraphs, Width):
+    def Format(Cues: list[dict[str, Any]], Paragraphs: bool, Width: int) -> str:
         """One line per cue, or paragraphs split at 1.5s+ gaps; wrapped at Width (0 = no wrap)."""
         if kS.ErrorMode:
             return ""
@@ -144,7 +145,7 @@ class kScriptFormatter:
 class kSrtToScriptApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

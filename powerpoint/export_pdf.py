@@ -30,7 +30,7 @@ class kPdfExporter:
     """One PDF export of one deck."""
 
     @staticmethod
-    def Export(Path, Out, Mode, OutputType):
+    def Export(Path: str, Out: str, Mode: str, OutputType: int) -> str:
         """Write the PDF; returns how it was written ("ExportAsFixedFormat" or the fallback note)."""
         if kS.ErrorMode:
             return ""
@@ -64,7 +64,7 @@ class kPdfExporter:
 class kExportPdfApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

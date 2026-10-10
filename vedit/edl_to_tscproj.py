@@ -46,6 +46,7 @@ import copy
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from kJsonFile import kJsonFile
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
@@ -57,7 +58,7 @@ class kTscprojPatcher:
     """Applies the keep segments of an EDL to the timeline of one Camtasia project."""
 
     @staticmethod
-    def ToTicks(Seconds):
+    def ToTicks(Seconds: float) -> int:
         """Seconds as Camtasia project ticks."""
         if kS.ErrorMode:
             return 0
@@ -68,7 +69,7 @@ class kTscprojPatcher:
             return 0
 
     @staticmethod
-    def ResolveTscproj(PathArg):
+    def ResolveTscproj(PathArg: str) -> Path | None:
         """Accept either the bundle directory or the inner JSON file."""
         if kS.ErrorMode:
             return None
@@ -89,7 +90,7 @@ class kTscprojPatcher:
             return None
 
     @staticmethod
-    def FindSourceId(Project, SourceHint):
+    def FindSourceId(Project: dict[str, Any], SourceHint: str | None) -> int:
         """Return the source bin ID of the target recording."""
         if kS.ErrorMode:
             return 0
@@ -111,7 +112,7 @@ class kTscprojPatcher:
             return 0
 
     @staticmethod
-    def MaxIdIn(Node):
+    def MaxIdIn(Node: Any) -> int:
         """The largest integer "id" anywhere in Node."""
         if kS.ErrorMode:
             return 0
@@ -131,7 +132,8 @@ class kTscprojPatcher:
             return 0
 
     @staticmethod
-    def MakeSegment(Template, NewId, StartTicks, DurationTicks, MediaStartTicks, Speed=1.0):
+    def MakeSegment(Template: dict[str, Any], NewId: int, StartTicks: int, DurationTicks: int, MediaStartTicks: int,
+                    Speed: float = 1.0) -> dict[str, Any]:
         """Build a clip child (ScreenVMFile or AMFile) from a template.
 
         For Speed > 1: the source mediaDuration stays the same (we consume the same
@@ -159,7 +161,8 @@ class kTscprojPatcher:
             return {}
 
     @staticmethod
-    def PatchTracks(Project, SourceId, KeepSegments, NextId):
+    def PatchTracks(Project: dict[str, Any], SourceId: int, KeepSegments: list[dict[str, Any]],
+                    NextId: list[int]) -> int:
         """For each timeline track, collapse all StitchedMedia clips that reference
         SourceId into a single new StitchedMedia with one child per EDL keep segment.
 
@@ -219,7 +222,7 @@ class kTscprojPatcher:
             return 0
 
     @staticmethod
-    def LinkMedia(SourceFile, DestFile, Name, Quiet):
+    def LinkMedia(SourceFile: Path, DestFile: Path, Name: str, Quiet: bool) -> None:
         """Hard-link (or else symlink) one media file into the output bundle. When neither works the file is not
         needed for the edit itself: a warning tells the person to copy it."""
         if kS.ErrorMode:
@@ -246,7 +249,8 @@ class kTscprojPatcher:
             return
 
     @staticmethod
-    def SetupOutputBundle(InputWasBundle, SourceBundleDir, OutPath, Project, Quiet):
+    def SetupOutputBundle(InputWasBundle: bool, SourceBundleDir: Path, OutPath: Path, Project: dict[str, Any],
+                          Quiet: bool) -> Path | None:
         """Create a bundle directory at OutPath and hard-link (or symlink) media files
         from the source bundle into it.  Returns the path of the JSON file to write.
 
@@ -279,7 +283,7 @@ class kTscprojPatcher:
 class kEdlToTscprojApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:
@@ -296,7 +300,7 @@ class kEdlToTscprojApp:
 
             InputWasBundle = Path(Args.tscproj).is_dir()
             TscprojFile = kTscprojPatcher.ResolveTscproj(Args.tscproj)
-            if kS.ErrorMode:
+            if kS.ErrorMode or TscprojFile is None:
                 return 1
             SourceBundleDir = TscprojFile.parent
             Edl = kJsonFile.Load(Args.edl, "EDL")
@@ -331,7 +335,7 @@ class kEdlToTscprojApp:
                 print(f"[vedit/edl_to_tscproj] patched {Patched} track(s)", file=sys.stderr)
             OutJson = kTscprojPatcher.SetupOutputBundle(InputWasBundle, SourceBundleDir, Path(Args.out), Project,
                                                         Args.quiet)
-            if kS.ErrorMode:
+            if kS.ErrorMode or OutJson is None:
                 return 1
             if not kJsonFile.Save(OutJson, Project):
                 return 1

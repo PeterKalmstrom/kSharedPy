@@ -49,6 +49,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 from kFfmpeg import kFfmpeg
 from kJsonFile import kJsonFile
@@ -59,7 +60,7 @@ class kEdlCutter:
     """Cuts and concatenates the keep ranges of one EDL out of one video with ffmpeg."""
 
     @staticmethod
-    def LoadEdl(EdlPath):
+    def LoadEdl(EdlPath: Path) -> tuple[str, float, list[dict[str, Any]]]:
         """Return (source, duration_s, segments); a gap or an empty segment is a spec mistake (exit 2)."""
         if kS.ErrorMode:
             return ("", 0.0, [])
@@ -81,12 +82,12 @@ class kEdlCutter:
             return ("", 0.0, [])
 
     @staticmethod
-    def KeepRanges(Segments, Padding, Total):
+    def KeepRanges(Segments: list[dict[str, Any]], Padding: float, Total: float) -> list[tuple[float, float]]:
         """Collapse adjacent kept segments and apply padding (clipped to [0, Total])."""
         if kS.ErrorMode:
             return []
         try:
-            Ranges = []
+            Ranges: list[tuple[float, float]] = []
             for Segment in Segments:
                 if not Segment["keep"]:
                     continue
@@ -102,7 +103,8 @@ class kEdlCutter:
             return []
 
     @staticmethod
-    def BuildFilterComplex(Ranges, AudioSource, AudioFadeSeconds=0.030, Fps=30.0):
+    def BuildFilterComplex(Ranges: list[tuple[float, float]], AudioSource: str, AudioFadeSeconds: float = 0.030,
+                           Fps: float = 30.0) -> str:
         """AudioSource is the filter-graph label for the audio source — e.g.
         "[0:a:0]" for stream 0, or "[amix]" if upstream amerged the streams.
 
@@ -139,7 +141,7 @@ class kEdlCutter:
             return ""
 
     @staticmethod
-    def AddQuiet(Command, Quiet):
+    def AddQuiet(Command: list[str], Quiet: bool) -> list[str]:
         """Insert `-loglevel error` after the program name when Quiet."""
         if kS.ErrorMode:
             return Command
@@ -153,8 +155,9 @@ class kEdlCutter:
             return Command
 
     @staticmethod
-    def RunReencode(Input, Out, Ranges, VideoCodec, AudioCodec, Crf, Preset, AudioStream, MixAudio,
-                    AudioStreamCount, AudioFadeSeconds, Fps, PixelFormat, Quiet):
+    def RunReencode(Input: Path, Out: Path, Ranges: list[tuple[float, float]], VideoCodec: str, AudioCodec: str,
+                    Crf: int, Preset: str, AudioStream: int, MixAudio: bool, AudioStreamCount: int,
+                    AudioFadeSeconds: float, Fps: float, PixelFormat: str, Quiet: bool) -> int:
         """Re-encode the keep ranges into Out; returns ffmpeg's exit code."""
         if kS.ErrorMode:
             return 1
@@ -199,7 +202,7 @@ class kEdlCutter:
             return 1
 
     @staticmethod
-    def RunCopy(Input, Out, Ranges, Quiet):
+    def RunCopy(Input: Path, Out: Path, Ranges: list[tuple[float, float]], Quiet: bool) -> int:
         """Stream-copy mode: extract each range to a temp file, then concat. Fast,
         but cut precision is keyframe-bound. Returns ffmpeg's exit code."""
         if kS.ErrorMode:
@@ -247,7 +250,7 @@ class kEdlCutter:
 class kApplyApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

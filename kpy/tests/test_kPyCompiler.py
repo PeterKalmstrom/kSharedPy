@@ -120,6 +120,17 @@ class kPyCompilerTests(unittest.TestCase):
                             "Settings": {"Product": {"a": 1}}})
         self.assertEqual(self.Compiler().returncode, 2)
 
+    def test_annotated_setting_keeps_its_annotation(self):
+        self.WriteMaster("kshared/kThing.py", 'class kThing:\n    Product: str = "master"  # kpy:setting Product\n'
+                         '    Folders: list[str] = ["a"]  # kpy:setting Folders\n    Size: int  # kpy:setting Size\n')
+        self.WriteManifest({"Out": "scripts/kThing.py", "Parts": ["kshared/kThing.py"],
+                            "Settings": {"Product": "my-product", "Folders": ["x", "y"]}})
+        self.assertEqual(self.Compiler("--action", "compile").returncode, 0)
+        Text = self.Output()
+        self.assertIn('Product: str = "my-product"  # kpy:setting Product', Text)
+        self.assertIn('Folders: list[str] = ["x", "y"]  # kpy:setting Folders', Text)
+        self.assertIn("Size: int  # kpy:setting Size", Text)  # a bare annotation has no value to replace
+
     def test_unknown_setting_is_bad_input(self):
         self.WriteManifest({"Out": "scripts/kThing.py", "Parts": ["kshared/kThing.py"], "Settings": {"Nope": 1}})
         Result = self.Compiler()

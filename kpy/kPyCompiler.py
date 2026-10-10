@@ -30,6 +30,7 @@ import json
 import os
 import re
 import sys
+from typing import Any
 
 MASTER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(MASTER, "kshared"))
@@ -48,14 +49,14 @@ PRIVATE_PATTERNS = [r"[A-Z]:\\Source\\", r"X:[\\/]", r"\bsig=[A-Za-z0-9_\-%]{8,}
 class kPyModule:
     """One output file of a product: its master parts, its settings, and the text the master makes of them."""
 
-    def __init__(self, Entry, ManifestDir, SharedRoot):
+    def __init__(self, Entry: Any, ManifestDir: str, SharedRoot: str) -> None:
         try:
             if not isinstance(Entry, dict) or not Entry.get("Out") or not Entry.get("Parts"):
                 raise ToolInputException(f"a Modules entry needs \"Out\" and \"Parts\": {Entry!r}")
-            self.Out = Entry["Out"]
-            self.Parts = list(Entry["Parts"])
-            self.Settings = dict(Entry.get("Settings", {}))
-            self.ImportPaths = list(Entry.get("ImportPaths", []))  # folders the output puts on sys.path itself
+            self.Out: str = Entry["Out"]
+            self.Parts: list[str] = list(Entry["Parts"])
+            self.Settings: dict[str, Any] = dict(Entry.get("Settings", {}))
+            self.ImportPaths: list[str] = list(Entry.get("ImportPaths", []))  # folders the output puts on sys.path
             self.ManifestDir = ManifestDir
             self.SharedRoot = SharedRoot
             self.OutPath = os.path.normpath(os.path.join(ManifestDir, self.Out))
@@ -66,7 +67,7 @@ class kPyModule:
         except Exception as e:
             kS.GlobalErrorHandler(e, f"kPyModule.__init__(out={Entry!r})")
 
-    def Build(self):
+    def Build(self) -> str:
         """The full generated text (header + body), LF line endings. Raises ToolInputException on a gate failure."""
         if kS.ErrorMode:
             return ""
@@ -91,7 +92,7 @@ class kPyModule:
             kS.GlobalErrorHandler(e, f"kPyModule.Build(out={self.Out})")
             return ""
 
-    def ReadPart(self, Part):
+    def ReadPart(self, Part: str) -> str:
         if kS.ErrorMode:
             return ""
         try:
@@ -108,16 +109,17 @@ class kPyModule:
             kS.GlobalErrorHandler(e, f"kPyModule.ReadPart(part={Part})")
             return ""
 
-    def ApplySettings(self, Part, Text):
-        """Replace the value of each assignment whose line carries "# kpy:setting <Name>" that the manifest sets.
+    def ApplySettings(self, Part: str, Text: str) -> tuple[str, set[str]]:
+        """Replace the value of each assignment whose line carries "# kpy:setting <Name>" that the manifest sets -
+        plain (`Name = "x"`) or annotated (`Name: str = "x"`; the annotation is kept as written).
         Returns the new text and the names applied. A value must be a str, int, float, bool or a list of str."""
         if kS.ErrorMode:
             return Text, set()
         try:
             Lines = Text.split("\n")
-            Applied = set()
+            Applied: set[str] = set()
             for Node in ast.walk(ast.parse(Text)):
-                if not isinstance(Node, ast.Assign):
+                if not isinstance(Node, (ast.Assign, ast.AnnAssign)) or Node.value is None:
                     continue
                 Match = SETTING_PATTERN.search(Lines[Node.lineno - 1])
                 if not Match or Match.group(1) not in self.Settings:
@@ -143,7 +145,7 @@ class kPyModule:
 
     # A SyntaxError (bad input, exit 2) can only be told apart by catching it; any other error is still reported.
     # DOCUMENTED EXCEPTION: Python has no syntax test that does not raise.
-    def Parse(self, Text, Name):
+    def Parse(self, Text: str, Name: str) -> None:
         if kS.ErrorMode:
             return
         try:
@@ -154,7 +156,7 @@ class kPyModule:
             kS.GlobalErrorHandler(e, f"kPyModule.Parse(name={Name})")
             return
 
-    def Header(self, Body):
+    def Header(self, Body: str) -> str:
         if kS.ErrorMode:
             return ""
         try:
@@ -167,7 +169,7 @@ class kPyModule:
             return ""
 
     @staticmethod
-    def MasterVersion(SharedRoot):
+    def MasterVersion(SharedRoot: str) -> str:
         """The master's release (the VERSION file at its root), or "unversioned"."""
         if kS.ErrorMode:
             return ""
@@ -182,7 +184,7 @@ class kPyModule:
             return ""
 
     @staticmethod
-    def VersionOnDisk(Text):
+    def VersionOnDisk(Text: str | None) -> str:
         """The master release named in a generated file's header, or ""."""
         if kS.ErrorMode:
             return ""
@@ -194,7 +196,7 @@ class kPyModule:
             return ""
 
     @staticmethod
-    def BodyHash(Body):
+    def BodyHash(Body: str) -> str:
         if kS.ErrorMode:
             return ""
         try:
@@ -203,7 +205,7 @@ class kPyModule:
             kS.GlobalErrorHandler(e, "kPyModule.BodyHash")
             return ""
 
-    def OnDisk(self):
+    def OnDisk(self) -> str | None:
         """The output as it is now (LF), or None when there is no file."""
         if kS.ErrorMode:
             return None
@@ -216,7 +218,7 @@ class kPyModule:
             kS.GlobalErrorHandler(e, f"kPyModule.OnDisk(out={self.Out})")
             return None
 
-    def State(self, Fresh):
+    def State(self, Fresh: str | None) -> str:
         """missing | not-generated | edited | stale | current. Fresh is the compiled text, or None (standalone)."""
         if kS.ErrorMode:
             return ""
@@ -237,7 +239,7 @@ class kPyModule:
             kS.GlobalErrorHandler(e, f"kPyModule.State(out={self.Out})")
             return ""
 
-    def Write(self, Text):
+    def Write(self, Text: str) -> None:
         if kS.ErrorMode:
             return
         try:
@@ -253,14 +255,14 @@ class kPyGates:
     """What must hold before any output is written: every master module an output imports is generated beside it,
     no output carries private material, and every master part follows the kShared error pattern."""
 
-    def __init__(self, Manifest):
+    def __init__(self, Manifest: "kPyManifest") -> None:
         try:
             self.Manifest = Manifest
-            self.Problems = []
+            self.Problems: list[str] = []
         except Exception as e:
             kS.GlobalErrorHandler(e, "kPyGates.__init__")
 
-    def Run(self, Built):
+    def Run(self, Built: dict[kPyModule, str]) -> None:
         """Built: {kPyModule: generated text}. Raises ToolInputException listing every problem found."""
         if kS.ErrorMode:
             return
@@ -279,12 +281,12 @@ class kPyGates:
             kS.GlobalErrorHandler(e, "kPyGates.Run")
             return
 
-    def MasterIndex(self):
+    def MasterIndex(self) -> dict[str, str]:
         """{module name: master path relative to SharedRoot} for every master .py (not tests, not scratch)."""
         if kS.ErrorMode:
             return {}
         try:
-            Index = {}
+            Index: dict[str, str] = {}
             for Folder, SubFolders, Files in os.walk(self.Manifest.SharedRoot):
                 SubFolders[:] = [Sub for Sub in SubFolders if not Sub.startswith((".", "_")) and Sub != "tests"]
                 for Name in Files:
@@ -297,7 +299,7 @@ class kPyGates:
             return {}
 
     @staticmethod
-    def IsGenerated(Path):
+    def IsGenerated(Path: str) -> bool:
         """True for a generated copy inside the master (kSharedPy compiles its own folders): not a master."""
         if kS.ErrorMode:
             return False
@@ -308,7 +310,7 @@ class kPyGates:
             kS.GlobalErrorHandler(e, f"kPyGates.IsGenerated(path={Path})")
             return False
 
-    def CheckImports(self, Module, Text, MasterIndex):
+    def CheckImports(self, Module: kPyModule, Text: str, MasterIndex: dict[str, str]) -> None:
         """An output that imports a master module needs that module beside it: generated, or the product's own."""
         if kS.ErrorMode:
             return
@@ -334,7 +336,7 @@ class kPyGates:
             kS.GlobalErrorHandler(e, f"kPyGates.CheckImports(out={Module.Out})")
             return
 
-    def PrivateRules(self):
+    def PrivateRules(self) -> list[re.Pattern[str]]:
         """Private paths, secrets in URLs, and the kPS client-name denylist (when it is beside the master) minus the
         manifest's AllowNames."""
         if kS.ErrorMode:
@@ -353,7 +355,7 @@ class kPyGates:
             kS.GlobalErrorHandler(e, "kPyGates.PrivateRules")
             return []
 
-    def CheckPrivate(self, Module, Text, Rules):
+    def CheckPrivate(self, Module: kPyModule, Text: str, Rules: list[re.Pattern[str]]) -> None:
         if kS.ErrorMode:
             return
         try:
@@ -365,7 +367,7 @@ class kPyGates:
             kS.GlobalErrorHandler(e, f"kPyGates.CheckPrivate(out={Module.Out})")
             return
 
-    def CheckPattern(self):
+    def CheckPattern(self) -> None:
         """Every master part follows the error pattern (kpy/check_kpattern.py, the same audit products run)."""
         if kS.ErrorMode:
             return
@@ -384,7 +386,7 @@ class kPyGates:
 class kPyManifest:
     """A product's kpy.manifest.json: where the master is and which modules to generate."""
 
-    def __init__(self, Path, SharedRootOverride="", Standalone=False):
+    def __init__(self, Path: str, SharedRootOverride: str = "", Standalone: bool = False) -> None:
         try:
             if not os.path.isfile(Path):
                 raise ToolInputException(f"manifest not found: {Path}")
@@ -395,8 +397,8 @@ class kPyManifest:
                     raise ToolInputException(f"{Path}: not valid JSON: {e}")
             self.Path = os.path.abspath(Path)
             self.Dir = os.path.dirname(self.Path)
-            self.Product = Data.get("Product", "")
-            self.AllowNames = list(Data.get("AllowNames", []))
+            self.Product: str = Data.get("Product", "")
+            self.AllowNames: list[str] = list(Data.get("AllowNames", []))
             Root = SharedRootOverride or os.environ.get("KPY_SHARED_ROOT", "") or Data.get("SharedRoot", "")
             self.SharedRoot = os.path.normpath(os.path.join(self.Dir, Root)) if Root else ""
             if not Standalone and not os.path.isdir(self.SharedRoot or "?"):
@@ -416,18 +418,19 @@ class kPyReport:
 
     SKIP = {"node_modules", ".git", "_scratch", "_archive", "__pycache__", ".venv", "out"}
 
-    def __init__(self, Root, SharedRootOverride=""):
+    def __init__(self, Root: str, SharedRootOverride: str = "") -> None:
         try:
             self.Root = os.path.abspath(Root)
             self.SharedRootOverride = SharedRootOverride
         except Exception as e:
             kS.GlobalErrorHandler(e, "kPyReport.__init__")
 
-    def Manifests(self):
+    def Manifests(self) -> list[str]:
         if kS.ErrorMode:
             return []
         try:
-            Found, Seen = [], set()
+            Found: list[str] = []
+            Seen: set[str] = set()
             for Folder, SubFolders, Files in os.walk(self.Root):
                 SubFolders[:] = [Sub for Sub in SubFolders if Sub not in kPyReport.SKIP]
                 Real = os.path.normcase(os.path.realpath(Folder))  # a linked folder (.agents\skills) counts once
@@ -439,7 +442,7 @@ class kPyReport:
             kS.GlobalErrorHandler(e, "kPyReport.Manifests")
             return []
 
-    def Run(self):
+    def Run(self) -> int:
         """Print one line per product; returns 5 when any product is behind, else 0."""
         if kS.ErrorMode:
             return 1
@@ -447,7 +450,8 @@ class kPyReport:
             Behind = 0
             for Path in self.Manifests():
                 Manifest = kPyManifest(Path, self.SharedRootOverride)
-                States, Versions = {}, set()
+                States: dict[str, int] = {}
+                Versions: set[str] = set()
                 for Module in Manifest.Modules:
                     State = Module.State(Module.Build())
                     States[State] = States.get(State, 0) + 1
@@ -468,7 +472,7 @@ class kPyReport:
 class kPyCompilerApp:
     """The command line: Check, Compile, Verify."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:
@@ -491,7 +495,7 @@ class kPyCompilerApp:
             if not Args.manifest:
                 raise ToolInputException("--manifest is required (except with --action report)")
             Manifest = kPyManifest(Args.manifest, Args.shared_root, Args.standalone)
-            Built = {}
+            Built: dict[kPyModule, str] = {}
             if not Args.standalone:
                 for Module in Manifest.Modules:
                     Built[Module] = Module.Build()
@@ -505,7 +509,7 @@ class kPyCompilerApp:
                         raise ToolReportableException(
                             f"{Module.Out} is {State}: a hand change would be lost. Port it into the master, "
                             "then run again with --adopt.")
-                    Module.Write(Fresh)
+                    Module.Write(Built[Module])  # compile is never standalone, so every module was built
                     print(f"written   {Module.Out}  (was {State})")
                     continue
                 print(f"{State:<9} {Module.Out}")

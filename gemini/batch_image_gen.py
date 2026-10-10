@@ -70,6 +70,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from kGenAi import kGenAi
 from kJsonFile import kJsonFile
@@ -81,7 +82,7 @@ DEFAULT_MODEL = "gemini-3.1-flash-image-preview"
 class kImageJob:
     """One image to generate: prompt, output path, aspect ratio, model."""
 
-    def __init__(self, Prompt, OutPath, AspectRatio, Model):
+    def __init__(self, Prompt: str, OutPath: str, AspectRatio: str, Model: str) -> None:
         try:
             self.Prompt = Prompt
             self.OutPath = OutPath
@@ -91,7 +92,7 @@ class kImageJob:
             kS.GlobalErrorHandler(e, "kImageJob.__init__")
 
     @staticmethod
-    def FromSpec(SpecPath, DefaultAspect, DefaultModel):
+    def FromSpec(SpecPath: str, DefaultAspect: str, DefaultModel: str) -> list["kImageJob"]:
         """The jobs of a JSON spec file (a list of {prompt, out, aspect_ratio?, model?}), validated in full."""
         if kS.ErrorMode:
             return []
@@ -101,7 +102,7 @@ class kImageJob:
                 return []
             if not isinstance(Spec, list):
                 raise ToolInputException(f"spec must be a JSON list of {{prompt, out}} entries: {SpecPath}")
-            Jobs = []
+            Jobs: list[kImageJob] = []
             for Index, Entry in enumerate(Spec):
                 if not isinstance(Entry, dict) or not Entry.get("prompt") or not Entry.get("out"):
                     raise ToolInputException(f"spec entry {Index} needs \"prompt\" and \"out\": {SpecPath}")
@@ -118,17 +119,17 @@ class kImageJob:
 class kImageGenerator:
     """Generates images through one Gemini client."""
 
-    def __init__(self, ApiKey, Quiet):
+    def __init__(self, ApiKey: str, Quiet: bool) -> None:
         try:
             self.Quiet = Quiet
             self.GenAi, self.Types, self.Errors = kGenAi.Load("batch_image_gen.py")
-            self.Client = self.GenAi.Client(api_key=ApiKey) if self.GenAi is not None else None
+            self.Client: Any =self.GenAi.Client(api_key=ApiKey) if self.GenAi is not None else None
         except kToolException:
             raise
         except Exception as e:
             kS.GlobalErrorHandler(e, "kImageGenerator.__init__")
 
-    def Request(self, Job):
+    def Request(self, Job: kImageJob) -> tuple[Any, str]:
         """The API response for one job, or the refusal text when the API refuses it (APIError)."""
         if kS.ErrorMode:
             return None, ""
@@ -147,7 +148,7 @@ class kImageGenerator:
             kS.GlobalErrorHandler(e, f"kImageGenerator.Request(out={Job.OutPath})")
             return None, ""
 
-    def ImageBytes(self, Response):
+    def ImageBytes(self, Response: Any) -> bytes | None:
         """The first inline image in the response, or None (safety block or text-only answer)."""
         if kS.ErrorMode:
             return None
@@ -163,7 +164,7 @@ class kImageGenerator:
             kS.GlobalErrorHandler(e, "kImageGenerator.ImageBytes")
             return None
 
-    def Generate(self, Job):
+    def Generate(self, Job: kImageJob) -> bool:
         """Generate one image and save it. True on success, False when the API refused the job."""
         if kS.ErrorMode:
             return False
@@ -198,7 +199,7 @@ class kImageGenerator:
 class kBatchImageGenApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:
@@ -215,7 +216,7 @@ class kBatchImageGenApp:
                                                "aspect_ratio?, model?} entries (batch mode)")
             Parser.add_argument("--quiet", action="store_true",
                                 help="Suppress per-job progress output. Errors still go to stderr.")
-            Args = Parser.parse_args()
+            Args: argparse.Namespace = Parser.parse_args()
 
             if not Args.prompt and not Args.spec:
                 raise ToolInputException("Either --prompt + --out OR --spec required")

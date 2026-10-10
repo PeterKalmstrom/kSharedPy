@@ -6,6 +6,8 @@ MASTER: kSharedPy/kshared/kJsonFile.py - products and kSharedPy's own folders re
     kJsonFile.Save(Out, Edl)                       # indent 2, ensure_ascii=False, creates the folder
 """
 import json
+import os
+from typing import Any
 from pathlib import Path as kPath
 
 from kShared import ToolInputException, kS, kToolException
@@ -15,7 +17,7 @@ class kJsonFile:
     """Reads and writes JSON files; a missing or malformed file is the user's input mistake (exit 2)."""
 
     @staticmethod
-    def Load(Path, What="JSON file"):
+    def Load(Path: str | os.PathLike[str], What: str = "JSON file") -> Any:
         """The parsed value of the file. Raises ToolInputException "<What> not found: <path>" or
         "<What> is not valid JSON: <path> (<detail>)"."""
         if kS.ErrorMode:
@@ -35,7 +37,7 @@ class kJsonFile:
             return None
 
     @staticmethod
-    def Save(Path, Data, Indent=2):
+    def Save(Path: str | os.PathLike[str], Data: Any, Indent: int = 2) -> bool:
         """Write Data as UTF-8 JSON (non-ASCII kept as is), creating the folder. True when written."""
         if kS.ErrorMode:
             return False

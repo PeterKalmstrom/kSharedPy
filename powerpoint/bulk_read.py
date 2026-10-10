@@ -29,6 +29,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from _ppt import kPptLocator, kPptSession
 from kShared import kRun, kS, kToolException
@@ -38,7 +39,7 @@ class kSlideReader:
     """Reads title, body text and speaker notes from slides."""
 
     @staticmethod
-    def ShapeText(Shape):
+    def ShapeText(Shape: Any) -> str:
         """The shape's stripped text, or "" when it has none or PowerPoint refuses to read it."""
         if kS.ErrorMode:
             return ""
@@ -56,7 +57,7 @@ class kSlideReader:
             return ""
 
     @staticmethod
-    def NotesText(Slide):
+    def NotesText(Slide: Any) -> str:
         """The text of the first notes-page shape named "Notes...", or ""."""
         if kS.ErrorMode:
             return ""
@@ -76,7 +77,7 @@ class kSlideReader:
             return ""
 
     @staticmethod
-    def ReadSlide(Slide, IncludeNotes):
+    def ReadSlide(Slide: Any, IncludeNotes: bool) -> dict[str, Any]:
         """Extract title, body text, and speaker notes from a single slide."""
         if kS.ErrorMode:
             return {}
@@ -105,7 +106,7 @@ class kSlideReader:
             return {}
 
     @staticmethod
-    def BulkRead(Pres, Start, End, IncludeNotes):
+    def BulkRead(Pres: Any, Start: int, End: int | None, IncludeNotes: bool) -> list[dict[str, Any]]:
         """One record per slide from Start to End (clamped to the deck)."""
         if kS.ErrorMode:
             return []
@@ -127,7 +128,7 @@ class kSlideReader:
 class kBulkReadApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

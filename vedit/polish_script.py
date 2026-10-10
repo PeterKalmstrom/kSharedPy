@@ -63,7 +63,7 @@ class kScriptPolisher:
     """One Gemini polish of one reading script."""
 
     @staticmethod
-    def Polish(Text, Model, Voice):
+    def Polish(Text: str, Model: str, Voice: str) -> str:
         """The polished text; an empty answer from Gemini stops the tool (exit 2)."""
         if kS.ErrorMode:
             return ""
@@ -93,7 +93,7 @@ class kScriptPolisher:
 class kPolishScriptApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

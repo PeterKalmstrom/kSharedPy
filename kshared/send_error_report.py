@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import sys
+from typing import Any
 
 from kShared import ToolInputException, kErrorReport, kRun, kS, kToolException
 
@@ -22,14 +23,14 @@ from kShared import ToolInputException, kErrorReport, kRun, kS, kToolException
 class kSavedReport:
     """One saved report file."""
 
-    def __init__(self, Path):
+    def __init__(self, Path: str) -> None:
         try:
             self.Path = os.path.abspath(Path)
-            self.Data = None
+            self.Data: dict[str, Any] | None = None
         except Exception as e:
             kS.GlobalErrorHandler(e, "kSavedReport.__init__")
 
-    def Load(self):
+    def Load(self) -> dict[str, Any] | None:
         """Read the file. Returns the report dict."""
         if kS.ErrorMode:
             return None
@@ -50,25 +51,25 @@ class kSavedReport:
             kS.GlobalErrorHandler(e, f"kSavedReport.Load(file={self.Path})")
             return None
 
-    def Show(self):
+    def Show(self) -> bool:
         """Print what would be sent."""
         if kS.ErrorMode:
             return False
         try:
             sys.stderr.write("This would be sent:\n")
-            for Summary in self.Data.get("summary", []):
+            for Summary in (self.Data or {}).get("summary", []):  # Data is None only before a successful Load
                 sys.stderr.write("".join(f"    {Line}\n" for Line in Summary) + "\n")
             return True
         except Exception as e:
             kS.GlobalErrorHandler(e, "kSavedReport.Show")
             return False
 
-    def Send(self):
+    def Send(self) -> int:
         """Send every payload, then delete the file. Returns the number sent."""
         if kS.ErrorMode:
             return 0
         try:
-            Sent = kErrorReport.SendAll(self.Data["payloads"])
+            Sent = kErrorReport.SendAll(self.Data["payloads"]) if self.Data else 0  # not loaded: nothing to send
             if Sent:
                 os.remove(self.Path)
                 print(f"Error report sent ({kErrorReport.LastStatus}).")
@@ -79,7 +80,7 @@ class kSavedReport:
             kS.GlobalErrorHandler(e, "kSavedReport.Send")
             return 0
 
-    def Discard(self):
+    def Discard(self) -> bool:
         """The user said no: delete the file, send nothing."""
         if kS.ErrorMode:
             return False
@@ -95,7 +96,7 @@ class kSavedReport:
 class kSendErrorReportApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

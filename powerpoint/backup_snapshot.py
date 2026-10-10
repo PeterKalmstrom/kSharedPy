@@ -21,14 +21,14 @@ from kShared import ToolInputException, kRun, kS, kToolException
 class kBackupSnapshot:
     """One snapshot of one deck file."""
 
-    def __init__(self, Source, Label):
+    def __init__(self, Source: str, Label: str) -> None:
         try:
             self.Source = pathlib.Path(Source).resolve()
             self.Label = Label
         except Exception as e:
             kS.GlobalErrorHandler(e, "kBackupSnapshot.__init__")
 
-    def Target(self):
+    def Target(self) -> pathlib.Path | None:
         """The snapshot path beside the deck."""
         if kS.ErrorMode:
             return None
@@ -39,7 +39,7 @@ class kBackupSnapshot:
             kS.GlobalErrorHandler(e, "kBackupSnapshot.Target")
             return None
 
-    def Save(self):
+    def Save(self) -> pathlib.Path | None:
         """Copy the deck; never overwrite an earlier snapshot. Returns the new path."""
         if kS.ErrorMode:
             return None
@@ -47,6 +47,8 @@ class kBackupSnapshot:
             if not self.Source.is_file():
                 raise ToolInputException(f"not found: {self.Source}")
             Destination = self.Target()
+            if Destination is None:  # Target already reported the failure
+                return None
             if Destination.exists():
                 raise ToolInputException(f"refusing to overwrite {Destination}")
             shutil.copy2(self.Source, Destination)
@@ -61,7 +63,7 @@ class kBackupSnapshot:
 class kBackupSnapshotApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

@@ -10,6 +10,7 @@ because every script that loads this module declares google-genai in its PEP 723
 import importlib
 import importlib.util
 import os
+from typing import Any
 
 from kShared import ToolInputException, ToolReportableException, kS, kToolException
 
@@ -23,7 +24,7 @@ class kGenAi:
     """The google-genai SDK, loaded on demand: a missing package is an expected state with an install hint."""
 
     @staticmethod
-    def Load(Script):
+    def Load(Script: str) -> tuple[Any, Any, Any]:
         """Return (genai, types, errors) modules; raises ToolReportableException when the SDK is not installed."""
         if kS.ErrorMode:
             return None, None, None
@@ -41,7 +42,7 @@ class kGenAi:
             return None, None, None
 
     @staticmethod
-    def HasKey():
+    def HasKey() -> bool:
         """True when GEMINI_API_KEY or GOOGLE_API_KEY is set (non-empty)."""
         if kS.ErrorMode:
             return False
@@ -52,7 +53,7 @@ class kGenAi:
             return False
 
     @staticmethod
-    def RequireKey(Hint=""):
+    def RequireKey(Hint: str = "") -> str:
         """The API key (GEMINI_API_KEY, else GOOGLE_API_KEY). A missing key is an expected state: ToolInputException
         (exit 2) with the get-a-key message, Hint appended."""
         if kS.ErrorMode:

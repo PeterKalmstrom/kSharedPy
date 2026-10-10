@@ -27,7 +27,7 @@ class kSlideRenderer:
     """PowerPoint Save As JPEG, renamed to s001.jpg ..."""
 
     @staticmethod
-    def Render(Path, OutDir):
+    def Render(Path: str, OutDir: str) -> list[str]:
         """Render every slide of Path into OutDir. Returns the JPEG paths."""
         if kS.ErrorMode:
             return []
@@ -65,7 +65,7 @@ class kSlideRenderer:
 class kRenderSlidesApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

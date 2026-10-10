@@ -44,18 +44,18 @@ class kSmokeTest:
     """One end-to-end run of batch_image_gen.py and the checks on its output."""
 
     @staticmethod
-    def Fail(Message):
-        """The expected failure of the smoke test: exit 1 with "FAIL: <message>"."""
+    def Fail(Message: str) -> ToolReportableException:
+        """The expected failure of the smoke test: exit 1 with "FAIL: <message>". Always an exception, so `raise` never gets None."""
         if kS.ErrorMode:
-            return None
+            return ToolReportableException(f"FAIL: {Message}", ExitCode=1)
         try:
             return ToolReportableException(f"FAIL: {Message}", ExitCode=1)
         except Exception as e:
             kS.GlobalErrorHandler(e, "kSmokeTest.Fail")
-            return None
+            return ToolReportableException(f"FAIL: {Message}", ExitCode=1)
 
     @staticmethod
-    def Generate(OutPath):
+    def Generate(OutPath: Path) -> "subprocess.CompletedProcess[str] | None":
         """Run batch_image_gen.py for one image; raises the FAIL exception when it does not exit 0."""
         if kS.ErrorMode:
             return None
@@ -80,7 +80,7 @@ class kSmokeTest:
             return None
 
     @staticmethod
-    def Check(OutPath):
+    def Check(OutPath: Path) -> tuple[int, str]:
         """Size and magic-byte checks; returns (size, "PNG" or "JPEG")."""
         if kS.ErrorMode:
             return 0, ""
@@ -108,7 +108,7 @@ class kSmokeTest:
 class kSmokeTestApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

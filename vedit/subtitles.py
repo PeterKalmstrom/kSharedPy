@@ -43,6 +43,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 from kFfmpeg import kDependency
 from kGenAi import kGenAi
@@ -54,7 +55,8 @@ class kCutTimeline:
     """Moves transcript cues onto the timeline of the cut video."""
 
     @staticmethod
-    def Remap(TranscriptSegments, KeepRanges):
+    def Remap(TranscriptSegments: list[dict[str, Any]],
+              KeepRanges: list[tuple[float, float]]) -> list[dict[str, Any]]:
         """Re-map transcript segments to a timeline where everything outside
         KeepRanges has been removed and kept ranges are concatenated.
 
@@ -66,7 +68,7 @@ class kCutTimeline:
         if kS.ErrorMode:
             return []
         try:
-            Out = []
+            Out: list[dict[str, Any]] = []
             Cumulative = 0.0  # post-cut time at which the current keep range starts
             for KeepStart, KeepEnd in KeepRanges:
                 for Segment in TranscriptSegments:
@@ -138,7 +140,7 @@ class kCuePolisher:
     CUE_LINE = re.compile(r"^\[(\d+)\]\s*(.*)$")
 
     @staticmethod
-    def Polish(Cues, Model):
+    def Polish(Cues: list[dict[str, Any]], Model: str) -> list[dict[str, Any]]:
         """Polish the text of each cue via Gemini.
 
         A missing key, a missing google-genai package or a failed API call leaves the input cues unchanged with
@@ -179,13 +181,13 @@ class kCuePolisher:
                     f"[vedit/subtitles] WARNING: Gemini polish failed ({Failure}); using raw text.\n"
                 )
                 return Cues
-            PolishedByIndex = {}
+            PolishedByIndex: dict[int, str] = {}
             for Line in (Response.text or "").splitlines():
                 Match = kCuePolisher.CUE_LINE.match(Line.strip())
                 if not Match:
                     continue
                 PolishedByIndex[int(Match.group(1))] = Match.group(2).strip()
-            Out = []
+            Out: list[dict[str, Any]] = []
             Missing = 0
             for Index, Cue in enumerate(Cues):
                 PolishedText = PolishedByIndex.get(Index + 1)
@@ -211,7 +213,7 @@ class kSubtitleWriter:
     """Formats cues as SRT or WebVTT text."""
 
     @staticmethod
-    def SrtTime(Seconds):
+    def SrtTime(Seconds: float) -> str:
         """Seconds as an SRT timestamp HH:MM:SS,mmm."""
         if kS.ErrorMode:
             return "00:00:00,000"
@@ -231,7 +233,7 @@ class kSubtitleWriter:
             return "00:00:00,000"
 
     @staticmethod
-    def VttTime(Seconds):
+    def VttTime(Seconds: float) -> str:
         """Seconds as a WebVTT timestamp HH:MM:SS.mmm."""
         if kS.ErrorMode:
             return "00:00:00.000"
@@ -242,7 +244,7 @@ class kSubtitleWriter:
             return "00:00:00.000"
 
     @staticmethod
-    def Wrap(Text, MaxLine):
+    def Wrap(Text: str, MaxLine: int) -> str:
         """Soft-wrap Text at MaxLine characters on word boundaries."""
         if kS.ErrorMode:
             return Text
@@ -263,7 +265,7 @@ class kSubtitleWriter:
             return Text
 
     @staticmethod
-    def ToSrt(Segments, MaxLine):
+    def ToSrt(Segments: list[dict[str, Any]], MaxLine: int) -> str:
         """The cues as SRT text."""
         if kS.ErrorMode:
             return ""
@@ -281,7 +283,7 @@ class kSubtitleWriter:
             return ""
 
     @staticmethod
-    def ToVtt(Segments, MaxLine):
+    def ToVtt(Segments: list[dict[str, Any]], MaxLine: int) -> str:
         """The cues as WebVTT text."""
         if kS.ErrorMode:
             return ""
@@ -301,7 +303,7 @@ class kSubtitleWriter:
 class kSubtitlesApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

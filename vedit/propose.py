@@ -117,6 +117,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 from _transcript import kTranscript
 from kFfmpeg import kDependency, kFfmpeg
@@ -131,7 +132,7 @@ class kSilenceDetector:
     """Silence, freeze and screen-activity detection over one recording."""
 
     @staticmethod
-    def RunAnalysis(Command, Name):
+    def RunAnalysis(Command: list[str], Name: str) -> str:
         """Run an ffmpeg analysis pass and return its stderr. ffmpeg refusing the input is an expected state: its
         output is shown and the tool stops (exit 1)."""
         if kS.ErrorMode:
@@ -149,7 +150,7 @@ class kSilenceDetector:
             return ""
 
     @staticmethod
-    def Ffmpeg(Input, Db, MinSeconds, Quiet):
+    def Ffmpeg(Input: Path, Db: float, MinSeconds: float, Quiet: bool) -> list[tuple[float, float]]:
         """Return list of (start, end) for silent intervals >= MinSeconds (ffmpeg silencedetect)."""
         if kS.ErrorMode:
             return []
@@ -163,8 +164,8 @@ class kSilenceDetector:
             if not Quiet:
                 print(f"[vedit/propose] ffmpeg silencedetect (noise={Db}dB d={MinSeconds}s)…", file=sys.stderr)
             Output = kSilenceDetector.RunAnalysis(Command, "silencedetect")
-            Ranges = []
-            CurrentStart = None
+            Ranges: list[tuple[float, float]] = []
+            CurrentStart: float | None = None
             for Line in Output.splitlines():
                 Match = re.search(r"silence_start:\s*([\d.]+)", Line)
                 if Match:
@@ -182,7 +183,8 @@ class kSilenceDetector:
             return []
 
     @staticmethod
-    def FromTranscript(Transcript, MinSeconds, Total, Quiet):
+    def FromTranscript(Transcript: dict[str, Any], MinSeconds: float, Total: float,
+                       Quiet: bool) -> list[tuple[float, float]]:
         """Derive silence ranges from the Whisper transcript: a 'silence' is any
         span of Total that contains no transcribed words for at least MinSeconds.
 
@@ -220,7 +222,7 @@ class kSilenceDetector:
             return []
 
     @staticmethod
-    def Silero(Input, MinSeconds, Total, Quiet):
+    def Silero(Input: Path, MinSeconds: float, Total: float, Quiet: bool) -> list[tuple[float, float]]:
         """Detect silences using silero-vad (NN-based VAD).
 
         Speech timestamps are inverted to silence ranges, including any leading
@@ -273,7 +275,7 @@ class kSilenceDetector:
             return []
 
     @staticmethod
-    def Freezes(Input, Noise, MinSeconds, Quiet):
+    def Freezes(Input: Path, Noise: float, MinSeconds: float, Quiet: bool) -> list[tuple[float, float]]:
         """Return list of (start, end) for static-screen intervals >= MinSeconds.
 
         Uses ffmpeg freezedetect: marks a range frozen when consecutive frames
@@ -310,7 +312,8 @@ class kSilenceDetector:
             return []
 
     @staticmethod
-    def ScreenActivity(Input, IntervalSeconds=2.0, ChangeThreshold=8.0, Quiet=False):
+    def ScreenActivity(Input: Path, IntervalSeconds: float = 2.0, ChangeThreshold: float = 8.0,
+                       Quiet: bool = False) -> list[float]:
         """Extract one grayscale frame per IntervalSeconds (128×72), compare consecutive
         frames via mean absolute pixel difference.  Returns timestamps of frames where
         the change exceeds ChangeThreshold (0–255 scale).
@@ -332,12 +335,15 @@ class kSilenceDetector:
                 "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
             ]
             Process = subprocess.Popen(Command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            Changes = []
-            Previous = None
+            Stdout = Process.stdout
+            if Stdout is None:  # cannot happen with stdout=PIPE; narrows the type
+                raise RuntimeError("ffmpeg frame pipe has no stdout")
+            Changes: list[float] = []
+            Previous: bytes | None = None
             FrameIndex = 0
             try:
                 while True:
-                    Chunk = Process.stdout.read(FrameBytes)
+                    Chunk = Stdout.read(FrameBytes)
                     if len(Chunk) < FrameBytes:
                         break
                     if Previous is not None:
@@ -350,7 +356,7 @@ class kSilenceDetector:
                     Previous = Chunk
                     FrameIndex += 1
             finally:
-                Process.stdout.close()
+                Stdout.close()
                 Process.wait()
             if not Quiet:
                 print(
@@ -364,7 +370,7 @@ class kSilenceDetector:
             return []
 
     @staticmethod
-    def HasScreenChange(Start, End, Changes, IntervalSeconds):
+    def HasScreenChange(Start: float, End: float, Changes: list[float], IntervalSeconds: float) -> bool:
         """True iff any screen-change timestamp falls within [Start, End].
 
         A change recorded at timestamp t means the screen differed between frames at
@@ -555,7 +561,7 @@ class kGeminiCuts:
     """The Gemini passes: retake finder, filler trim, and the multimodal retake check."""
 
     @staticmethod
-    def TranscriptText(Segments):
+    def TranscriptText(Segments: list[dict[str, Any]]) -> str:
         """The transcript as "[start-end] text" lines for the prompts."""
         if kS.ErrorMode:
             return ""
@@ -566,7 +572,7 @@ class kGeminiCuts:
             return ""
 
     @staticmethod
-    def AskForSpans(Prompt, Model):
+    def AskForSpans(Prompt: str, Model: str) -> str:
         """Send a span prompt with the JSON array schema; returns the raw answer text."""
         if kS.ErrorMode:
             return "[]"
@@ -592,7 +598,7 @@ class kGeminiCuts:
             return "[]"
 
     @staticmethod
-    def ToSpans(Items, Label):
+    def ToSpans(Items: list[Any], Label: str) -> list[tuple[float, float, str]]:
         """The well-formed (start, end, "<Label>: reason") spans in the model's items; a malformed item is skipped
         (the schema makes that rare, and one bad item must not cost the other proposals)."""
         if kS.ErrorMode:
@@ -613,7 +619,7 @@ class kGeminiCuts:
             return []
 
     @staticmethod
-    def ParseJson(Raw):
+    def ParseJson(Raw: str) -> tuple[Any, bool]:
         """Return (items, ok): the parsed answer, or ([], False) when the model did not answer JSON."""
         if kS.ErrorMode:
             return ([], False)
@@ -627,7 +633,7 @@ class kGeminiCuts:
             return ([], False)
 
     @staticmethod
-    def FindFiller(Segments, Model, Quiet):
+    def FindFiller(Segments: list[dict[str, Any]], Model: str, Quiet: bool) -> list[tuple[float, float, str]]:
         """Second LLM pass: filler/hedging/redundant content trims.
 
         Same wiring as the retake finder but with a different prompt and category label.
@@ -657,7 +663,7 @@ class kGeminiCuts:
             return []
 
     @staticmethod
-    def FindRetakes(Segments, Model, Quiet):
+    def FindRetakes(Segments: list[dict[str, Any]], Model: str, Quiet: bool) -> list[tuple[float, float, str]]:
         """Text-only LLM pass: spans where the speaker redoes speech."""
         if kS.ErrorMode:
             return []
@@ -680,7 +686,7 @@ class kGeminiCuts:
             return []
 
     @staticmethod
-    def ExtractFrameJpeg(Input, Seconds):
+    def ExtractFrameJpeg(Input: Path, Seconds: float) -> tuple[bytes | None, str]:
         """Return (jpeg_bytes, "") for the frame at Seconds (q=5 ≈ 80% quality), or (None, why) when ffmpeg
         cannot grab one (past the end, unreadable frame) - the caller keeps the cut unvalidated."""
         if kS.ErrorMode:
@@ -702,7 +708,9 @@ class kGeminiCuts:
             return (None, "halted")
 
     @staticmethod
-    def ValidateRetakes(Input, RetakeCuts, TranscriptSegments, Model, Quiet):
+    def ValidateRetakes(Input: Path, RetakeCuts: list[tuple[float, float, str]],
+                        TranscriptSegments: list[dict[str, Any]], Model: str,
+                        Quiet: bool) -> list[tuple[float, float, str]]:
         """Second pass: for each retake cut, ask Gemini multimodal whether the
         screen frame at the cut midpoint is consistent with a SPEECH retake.
         Drops cuts the model classifies as content (action retry, screen
@@ -789,7 +797,8 @@ class kCutEditor:
     """Interval arithmetic on cuts, word snapping, audio events, and the EDL itself."""
 
     @staticmethod
-    def Intersect(First, Second):
+    def Intersect(First: list[tuple[float, float]],
+                  Second: list[tuple[float, float]]) -> list[tuple[float, float]]:
         """Interval-list intersection. Both inputs sorted, non-overlapping."""
         if kS.ErrorMode:
             return []
@@ -811,7 +820,7 @@ class kCutEditor:
             return []
 
     @staticmethod
-    def StartKey(Item):
+    def StartKey(Item: dict[str, float]) -> float:
         """Sort key: a word dict's "start"."""
         if kS.ErrorMode:
             return 0.0
@@ -822,7 +831,7 @@ class kCutEditor:
             return 0.0
 
     @staticmethod
-    def FirstKey(Item):
+    def FirstKey(Item: tuple[float, float, str]) -> float:
         """Sort key: a cut tuple's start."""
         if kS.ErrorMode:
             return 0.0
@@ -833,7 +842,7 @@ class kCutEditor:
             return 0.0
 
     @staticmethod
-    def FlattenWords(Transcript):
+    def FlattenWords(Transcript: dict[str, Any]) -> list[dict[str, float]]:
         """All words from all transcript segments, in time order."""
         if kS.ErrorMode:
             return []
@@ -849,7 +858,7 @@ class kCutEditor:
             return []
 
     @staticmethod
-    def SnapToSilenceGap(Seconds, Words, MaxDrift):
+    def SnapToSilenceGap(Seconds: float, Words: list[dict[str, float]], MaxDrift: float) -> float:
         """Find the midpoint of the silence gap closest to Seconds (within MaxDrift).
         Returns Seconds unchanged if no gap is close enough.
 
@@ -862,7 +871,7 @@ class kCutEditor:
         try:
             if not Words:
                 return Seconds
-            BestMiddle = None
+            BestMiddle: float | None = None
             BestDistance = MaxDrift + 1
             for Index in range(len(Words) - 1):
                 GapStart = Words[Index]["end"]
@@ -882,7 +891,8 @@ class kCutEditor:
             return Seconds
 
     @staticmethod
-    def WordSnapCuts(Cuts, Words, MaxDrift):
+    def WordSnapCuts(Cuts: list[tuple[float, float, str]], Words: list[dict[str, float]],
+                     MaxDrift: float) -> list[tuple[float, float, str]]:
         """Every cut with both boundaries snapped to the nearest silence gap; cuts that collapse are dropped."""
         if kS.ErrorMode:
             return []
@@ -899,7 +909,7 @@ class kCutEditor:
             return []
 
     @staticmethod
-    def IsFullySilent(Silences, Start, End):
+    def IsFullySilent(Silences: list[tuple[float, float]], Start: float, End: float) -> bool:
         """True iff every point in [Start, End] falls in some silence interval (Silences sorted)."""
         if kS.ErrorMode:
             return True
@@ -919,7 +929,8 @@ class kCutEditor:
             return True
 
     @staticmethod
-    def DetectAudioEvents(Input, Transcript, Quiet, MinDuration=0.1, MaxDuration=2.0, SilenceDb=-40.0):
+    def DetectAudioEvents(Input: Path, Transcript: dict[str, Any], Quiet: bool, MinDuration: float = 0.1,
+                          MaxDuration: float = 2.0, SilenceDb: float = -40.0) -> list[tuple[float, float, str]]:
         """Find non-speech vocalizations: audible sounds in inter-word gaps.
 
         Strategy: any gap between consecutive transcript words that (a) falls in
@@ -979,7 +990,7 @@ class kCutEditor:
             return []
 
     @staticmethod
-    def MergeCuts(Cuts):
+    def MergeCuts(Cuts: list[tuple[float, float, str]]) -> list[tuple[float, float, str]]:
         """Sort the cuts and merge overlapping or touching ones, joining their reasons."""
         if kS.ErrorMode:
             return []
@@ -1001,7 +1012,7 @@ class kCutEditor:
             return []
 
     @staticmethod
-    def IntervalCut(Cuts, Start, End):
+    def IntervalCut(Cuts: list[tuple[float, float, str]], Start: float, End: float) -> tuple[bool, str]:
         """(True, reason) when the middle of [Start, End] lies in a cut, else (False, "")."""
         if kS.ErrorMode:
             return (False, "")
@@ -1016,7 +1027,7 @@ class kCutEditor:
             return (False, "")
 
     @staticmethod
-    def IntervalSpeed(SpeedMap, Start, End):
+    def IntervalSpeed(SpeedMap: list[tuple[float, float, float]], Start: float, End: float) -> float:
         """The speed of the speed-up span holding the middle of [Start, End], else 1.0."""
         if kS.ErrorMode:
             return 1.0
@@ -1031,7 +1042,8 @@ class kCutEditor:
             return 1.0
 
     @staticmethod
-    def BuildEdl(Cuts, Total, Source, SpeedSegments=None):
+    def BuildEdl(Cuts: list[tuple[float, float, str]], Total: float, Source: str,
+                 SpeedSegments: list[tuple[float, float, str, float]] | None = None) -> dict[str, Any]:
         """Build EDL from cuts (keep=False) and optional SpeedSegments (keep=True, speed>1).
 
         All boundary points from both cuts and SpeedSegments are collected first, then
@@ -1042,7 +1054,7 @@ class kCutEditor:
             return {}
         try:
             Cuts = [(max(0.0, Start), min(Total, End), Reason) for Start, End, Reason in Cuts if End > Start]
-            SpeedMap = []
+            SpeedMap: list[tuple[float, float, float]] = []
             if SpeedSegments:
                 for SpeedStart, SpeedEnd, _Reason, Speed in SpeedSegments:
                     if SpeedEnd > SpeedStart:
@@ -1056,7 +1068,7 @@ class kCutEditor:
                 Points.add(SpeedStart)
                 Points.add(SpeedEnd)
             SortedPoints = sorted(Points)
-            Raw = []
+            Raw: list[dict[str, Any]] = []
             for Index in range(len(SortedPoints) - 1):
                 Start, End = SortedPoints[Index], SortedPoints[Index + 1]
                 if End - Start < 0.001:
@@ -1066,12 +1078,12 @@ class kCutEditor:
                     Raw.append({"start": Start, "end": End, "keep": False, "reason": Reason})
                 else:
                     Speed = kCutEditor.IntervalSpeed(SpeedMap, Start, End)
-                    Segment = {"start": Start, "end": End, "keep": True, "reason": ""}
+                    Segment: dict[str, Any] = {"start": Start, "end": End, "keep": True, "reason": ""}
                     if Speed != 1.0:
                         Segment["speed"] = Speed
                     Raw.append(Segment)
             # Merge consecutive intervals with identical keep/speed/reason
-            Segments = []
+            Segments: list[dict[str, Any]] = []
             for Segment in Raw:
                 if (
                     Segments
@@ -1102,7 +1114,7 @@ class kProposeApp:
     """Command line."""
 
     @staticmethod
-    def ParseArgs():
+    def ParseArgs() -> argparse.Namespace | None:
         """The command-line flags."""
         if kS.ErrorMode:
             return None
@@ -1154,7 +1166,8 @@ class kProposeApp:
             kS.GlobalErrorHandler(e, "kProposeApp.ParseArgs")
             return None
 
-    def DetectSilences(self, Input, Total, TranscriptData):
+    def DetectSilences(self, Input: Path, Total: float, TranscriptData: dict[str, Any] | None
+                       ) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
         """Return (long_silences, short_silences) with the chosen VAD engine; short ones only with --static."""
         if kS.ErrorMode:
             return ([], [])
@@ -1179,14 +1192,15 @@ class kProposeApp:
             kS.GlobalErrorHandler(e, "kProposeApp.DetectSilences")
             return ([], [])
 
-    def ClassifySilences(self, SilencesLong, ScreenChanges):
+    def ClassifySilences(self, SilencesLong: list[tuple[float, float]], ScreenChanges: list[float]
+                         ) -> tuple[list[tuple[float, float, str]], list[tuple[float, float, str, float]]]:
         """Return (cuts, speed_segments): each long silence is skipped, kept, sped up or cut."""
         if kS.ErrorMode:
             return ([], [])
         try:
             Args = self.Args
-            Cuts = []
-            SpeedSegments = []
+            Cuts: list[tuple[float, float, str]] = []
+            SpeedSegments: list[tuple[float, float, str, float]] = []
             SkippedLong = ScreenActiveSkipped = DemoPayoffKept = 0
             for Start, End in SilencesLong:
                 if Args.silence_max_s > 0 and (End - Start) > Args.silence_max_s:
@@ -1228,7 +1242,8 @@ class kProposeApp:
             kS.GlobalErrorHandler(e, "kProposeApp.ClassifySilences")
             return ([], [])
 
-    def CleanBoundaries(self, Cuts, TranscriptData):
+    def CleanBoundaries(self, Cuts: list[tuple[float, float, str]],
+                        TranscriptData: dict[str, Any] | None) -> list[tuple[float, float, str]]:
         """Word-snap the cut boundaries when a transcript is loaded, else shrink each cut by the padding.
         Audio-event cuts are already at inter-word boundaries by construction — snapping them can pull a cut end
         into the adjacent word, so they are excluded from the snap pass and re-added afterwards."""
@@ -1256,7 +1271,7 @@ class kProposeApp:
             kS.GlobalErrorHandler(e, "kProposeApp.CleanBoundaries")
             return []
 
-    def Summarize(self, Edl, Total, Out, StartTime):
+    def Summarize(self, Edl: dict[str, Any], Total: float, Out: Path, StartTime: float) -> None:
         """The closing stderr line: cut spans, cut share and speed-ups."""
         if kS.ErrorMode:
             return
@@ -1280,12 +1295,14 @@ class kProposeApp:
             kS.GlobalErrorHandler(e, "kProposeApp.Summarize")
             return
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:
-            self.Args = kProposeApp.ParseArgs()
-            Args = self.Args
+            Args = kProposeApp.ParseArgs()
+            if kS.ErrorMode or Args is None:
+                return 1
+            self.Args = Args
             Input = Path(Args.inp)
             Out = Path(Args.out)
             if not Input.exists():
@@ -1298,7 +1315,7 @@ class kProposeApp:
                 print(f"[vedit/propose] duration: {Total:.1f}s", file=sys.stderr)
 
             # Load the transcript up front (used for both the LLM retake finder and word-snap)
-            TranscriptData = None
+            TranscriptData: dict[str, Any] | None = None
             if Args.transcript:
                 TranscriptData = kJsonFile.Load(Args.transcript, "transcript")
                 if kS.ErrorMode:
@@ -1308,7 +1325,7 @@ class kProposeApp:
             # 1. Pure silence (>= silence_min_s, <= silence_max_s if the cap is set)
             SilencesLong, SilencesShort = self.DetectSilences(Input, Total, TranscriptData)
             # Screen-change detection (run once here; the result is used during silence filtering)
-            ScreenChanges = []
+            ScreenChanges: list[float] = []
             if Args.screen_check:
                 ScreenChanges = kSilenceDetector.ScreenActivity(
                     Input, Args.screen_interval_s, Args.screen_change_thr, Args.quiet,

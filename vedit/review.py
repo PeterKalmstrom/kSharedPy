@@ -40,6 +40,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from _transcript import kTranscript
 from kJsonFile import kJsonFile
@@ -50,7 +51,7 @@ class kEdlReview:
     """Markdown review of an EDL's cuts with transcript context, and the restore of one cut class."""
 
     @staticmethod
-    def FormatTime(Seconds):
+    def FormatTime(Seconds: float) -> str:
         """Seconds as MM:SS.ss."""
         if kS.ErrorMode:
             return ""
@@ -62,7 +63,7 @@ class kEdlReview:
             return ""
 
     @staticmethod
-    def Categorize(Reason):
+    def Categorize(Reason: str) -> str:
         """The cut class of a reason text: retake, filler, static, silence or other."""
         if kS.ErrorMode:
             return "other"
@@ -81,7 +82,7 @@ class kEdlReview:
             return "other"
 
     @staticmethod
-    def CountSortKey(Item):
+    def CountSortKey(Item: tuple[str, int]) -> int:
         """Sort key for (category, count) pairs: the largest count first."""
         if kS.ErrorMode:
             return 0
@@ -92,7 +93,8 @@ class kEdlReview:
             return 0
 
     @staticmethod
-    def Render(Edl, Transcript, Only, ContextSeconds, MaxLine):
+    def Render(Edl: dict[str, Any], Transcript: dict[str, Any], Only: str | None, ContextSeconds: float,
+               MaxLine: int) -> str:
         """The markdown review."""
         if kS.ErrorMode:
             return ""
@@ -103,7 +105,7 @@ class kEdlReview:
             Total = float(Edl["duration_s"])
             CutDuration = sum(Segment["end"] - Segment["start"] for Segment in Cuts)
             KeepDuration = sum(Segment["end"] - Segment["start"] for Segment in Keeps)
-            ByCategory = {}
+            ByCategory: dict[str, int] = {}
             for Cut in Cuts:
                 Category = kEdlReview.Categorize(Cut["reason"])
                 ByCategory[Category] = ByCategory.get(Category, 0) + 1
@@ -161,7 +163,7 @@ class kEdlReview:
             return ""
 
     @staticmethod
-    def Restore(Edl, Category):
+    def Restore(Edl: dict[str, Any], Category: str) -> tuple[dict[str, Any] | None, int]:
         """Return (new_edl, restored_count) with cuts whose reason contains Category flipped to keep:true.
         Adjacent kept segments are then merged so the EDL stays clean."""
         if kS.ErrorMode:
@@ -175,7 +177,7 @@ class kEdlReview:
                     Restored += 1
                 else:
                     Flipped.append(dict(Segment))
-            Merged = []
+            Merged: list[dict[str, Any]] = []
             for Segment in Flipped:
                 if Merged and Merged[-1]["keep"] and Segment["keep"]:
                     Merged[-1] = {
@@ -197,7 +199,7 @@ class kReviewApp:
     """Command line."""
 
     @staticmethod
-    def WriteOrPrint(OutPath, Text):
+    def WriteOrPrint(OutPath: str | None, Text: str) -> bool:
         """Write Text to OutPath (creating its folder); without a path print it. True when written to a file."""
         if kS.ErrorMode:
             return False
@@ -212,7 +214,7 @@ class kReviewApp:
             kS.GlobalErrorHandler(e, f"kReviewApp.WriteOrPrint(file={OutPath})")
             return False
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

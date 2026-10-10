@@ -32,6 +32,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from kFfmpeg import kDependency, kFfmpeg
 from kJsonFile import kJsonFile
@@ -41,7 +42,8 @@ from kShared import ToolInputException, kRun, kS, kToolException
 class kTranscriber:
     """One faster-whisper run over one media file."""
 
-    def __init__(self, Input, Model, Language, Device, ComputeType, Quiet):
+    def __init__(self, Input: Path, Model: str, Language: str, Device: str, ComputeType: str | None,
+                 Quiet: bool) -> None:
         try:
             self.Input = Input
             self.Model = Model
@@ -53,7 +55,7 @@ class kTranscriber:
             kS.GlobalErrorHandler(e, "kTranscriber.__init__")
 
     @staticmethod
-    def WordToDict(Word):
+    def WordToDict(Word: Any) -> dict[str, Any]:
         """One recognised word as its JSON form."""
         if kS.ErrorMode:
             return {}
@@ -69,7 +71,7 @@ class kTranscriber:
             return {}
 
     @staticmethod
-    def SegmentToDict(Segment):
+    def SegmentToDict(Segment: Any) -> dict[str, Any]:
         """One recognised segment (with its words) as its JSON form."""
         if kS.ErrorMode:
             return {}
@@ -90,7 +92,7 @@ class kTranscriber:
             kS.GlobalErrorHandler(e, "kTranscriber.SegmentToDict")
             return {}
 
-    def Transcribe(self):
+    def Transcribe(self) -> dict[str, Any] | None:
         """The transcript payload (dict) written by the command line; None after a reported error."""
         if kS.ErrorMode:
             return None
@@ -143,7 +145,7 @@ class kTranscriber:
 class kTranscribeApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:
@@ -170,7 +172,7 @@ class kTranscribeApp:
             Transcriber = kTranscriber(Input, Args.model, Args.language, Args.device, Args.compute_type,
                                        Args.quiet)
             Payload = Transcriber.Transcribe()
-            if kS.ErrorMode:
+            if kS.ErrorMode or Payload is None:
                 return 1
             if not kJsonFile.Save(Out, Payload):
                 return 1

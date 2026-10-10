@@ -53,6 +53,7 @@ Path matching:
 
 import argparse
 import json
+from typing import Any
 
 from _ppt import kPptLocator, kPptSession
 from kShared import kRun, kS, kToolException
@@ -80,7 +81,7 @@ NON_WORDS = ("|", "—", "-", "·")
 class kDeckAuditor:
     """Word-budget and font-floor audit of one presentation."""
 
-    def __init__(self, SkipNumbers, SkipPatterns):
+    def __init__(self, SkipNumbers: set[int], SkipPatterns: list[str]) -> None:
         try:
             self.SkipNumbers = SkipNumbers
             self.SkipPatterns = SkipPatterns
@@ -88,7 +89,7 @@ class kDeckAuditor:
             kS.GlobalErrorHandler(e, "kDeckAuditor.__init__")
 
     @staticmethod
-    def ShapeText(Shape):
+    def ShapeText(Shape: Any) -> str | None:
         """The shape's text, or None when it has none or PowerPoint refuses to read it."""
         if kS.ErrorMode:
             return None
@@ -106,7 +107,7 @@ class kDeckAuditor:
             return None
 
     @staticmethod
-    def FontSize(Shape):
+    def FontSize(Shape: Any) -> float | None:
         """The shape's font size in points, or None when mixed or unreadable."""
         if kS.ErrorMode:
             return None
@@ -120,7 +121,7 @@ class kDeckAuditor:
             return None
 
     @staticmethod
-    def IsVoteOrTemplate(Slide):
+    def IsVoteOrTemplate(Slide: Any) -> bool:
         """Detect voting / template slides by content cues."""
         if kS.ErrorMode:
             return False
@@ -144,7 +145,7 @@ class kDeckAuditor:
             return False
 
     @staticmethod
-    def SlideMetrics(Slide):
+    def SlideMetrics(Slide: Any) -> tuple[str, int, float, list[float]]:
         """Return (Title, BodyWordCount, MinBodyFontPt, BodySizes)."""
         if kS.ErrorMode:
             return "", 0, 0.0, []
@@ -174,7 +175,7 @@ class kDeckAuditor:
             kS.GlobalErrorHandler(e, "kDeckAuditor.SlideMetrics")
             return "", 0, 0.0, []
 
-    def SkipPatternHit(self, Title):
+    def SkipPatternHit(self, Title: str) -> bool:
         """True when the title contains one of the skip patterns."""
         if kS.ErrorMode:
             return False
@@ -188,7 +189,7 @@ class kDeckAuditor:
             kS.GlobalErrorHandler(e, "kDeckAuditor.SkipPatternHit")
             return False
 
-    def StatusFor(self, SlideNum, Title, BodyWords, MinSize):
+    def StatusFor(self, SlideNum: int, Title: str, BodyWords: int, MinSize: float) -> str:
         """Classify a slide's status."""
         if kS.ErrorMode:
             return ""
@@ -210,7 +211,7 @@ class kDeckAuditor:
             kS.GlobalErrorHandler(e, "kDeckAuditor.StatusFor")
             return ""
 
-    def Audit(self, Pres):
+    def Audit(self, Pres: Any) -> list[dict[str, Any]]:
         """Produce audit records for every slide."""
         if kS.ErrorMode:
             return []
@@ -245,7 +246,7 @@ class kAuditReport:
     """Prints the audit records."""
 
     @staticmethod
-    def PrintTable(Results, ShowAll=False):
+    def PrintTable(Results: list[dict[str, Any]], ShowAll: bool = False) -> None:
         """Print a tab-aligned report. Skipped slides hidden unless ShowAll."""
         if kS.ErrorMode:
             return None
@@ -277,7 +278,7 @@ class kAuditReport:
 class kAuditDeckApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

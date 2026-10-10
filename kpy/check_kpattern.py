@@ -29,18 +29,19 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FOLDERS = ["kshared", "kpy", "powerpoint", "gemini", "veo", "vedit"]  # kpy:setting Folders
-SHARED_FOLDER = "kshared"  # kpy:setting SharedFolder
+FOLDERS: list[str] = ["kshared", "kpy", "powerpoint", "gemini", "veo", "vedit"]  # kpy:setting Folders
+SHARED_FOLDER: str = "kshared"  # kpy:setting SharedFolder
 sys.path.insert(0, os.path.join(ROOT, SHARED_FOLDER))
 from kShared import ToolInputException, kRun, kS, kToolException  # noqa: E402  (the shared folder is on the path only from here)
 
 INFRA = {"kS", "kRun", "kErrorDetail", "kErrorReport", "kToolException", "ToolInputException", "ToolReportableException"}
+FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 
 
 class kPatternAudit:
     """Walks one file's syntax tree and collects every function that breaks the pattern."""
 
-    def __init__(self, Path):
+    def __init__(self, Path: str) -> None:
         try:
             self.Path = Path
             self.Rel = os.path.relpath(Path, ROOT)
@@ -48,11 +49,11 @@ class kPatternAudit:
                 self.Lines = File.read().splitlines()
             self.Tree = ast.parse("\n".join(self.Lines), Path)
             self.Module = os.path.splitext(os.path.basename(Path))[0]
-            self.Findings = []
+            self.Findings: list[str] = []
         except Exception as e:
             kS.GlobalErrorHandler(e, f"kPatternAudit.__init__(file={Path})")
 
-    def Add(self, Node, Message):
+    def Add(self, Node: FunctionNode, Message: str) -> None:
         if kS.ErrorMode:
             return
         try:
@@ -61,7 +62,7 @@ class kPatternAudit:
             kS.GlobalErrorHandler(e, "kPatternAudit.Add")
             return
 
-    def Exempt(self, Node):
+    def Exempt(self, Node: FunctionNode) -> bool:
         if kS.ErrorMode:
             return False
         try:
@@ -73,7 +74,7 @@ class kPatternAudit:
             kS.GlobalErrorHandler(e, "kPatternAudit.Exempt")
             return False
 
-    def Run(self):
+    def Run(self) -> list[str]:
         if kS.ErrorMode:
             return []
         try:
@@ -87,7 +88,7 @@ class kPatternAudit:
             kS.GlobalErrorHandler(e, f"kPatternAudit.Run(file={self.Path})")
             return []
 
-    def Visit(self, Node, ClassName):
+    def Visit(self, Node: ast.stmt, ClassName: str | None) -> None:
         if kS.ErrorMode:
             return
         try:
@@ -100,7 +101,7 @@ class kPatternAudit:
             kS.GlobalErrorHandler(e, "kPatternAudit.Visit")
             return
 
-    def CheckFunction(self, Node, ClassName):
+    def CheckFunction(self, Node: FunctionNode, ClassName: str | None) -> None:
         if kS.ErrorMode:
             return
         try:
@@ -110,8 +111,9 @@ class kPatternAudit:
             if ClassName in INFRA or self.Exempt(Node):
                 return
             Body = list(Node.body)
-            if Body and isinstance(Body[0], ast.Expr) and isinstance(getattr(Body[0], "value", None), ast.Constant) \
-                    and isinstance(Body[0].value.value, str):
+            First = Body[0] if Body else None
+            if isinstance(First, ast.Expr) and isinstance(First.value, ast.Constant) \
+                    and isinstance(First.value.value, str):
                 Body = Body[1:]
             if Node.name != "__init__":
                 if not Body or not self.IsGuard(Body[0]):
@@ -127,7 +129,7 @@ class kPatternAudit:
             return
 
     @staticmethod
-    def IsGuard(Stmt):
+    def IsGuard(Stmt: ast.stmt) -> bool:
         if kS.ErrorMode:
             return False
         try:
@@ -137,7 +139,7 @@ class kPatternAudit:
             kS.GlobalErrorHandler(e, "kPatternAudit.IsGuard")
             return False
 
-    def CheckHandlers(self, Node, ClassName, Try):
+    def CheckHandlers(self, Node: FunctionNode, ClassName: str | None, Try: ast.Try) -> None:
         if kS.ErrorMode:
             return
         try:
@@ -163,8 +165,8 @@ class kPatternAudit:
             if len(Args) < 2 or not isinstance(Args[1], (ast.Constant, ast.JoinedStr)):
                 self.Add(Node, f'3 location must be a literal "{Want}"')
             else:
-                Text = Args[1].value if isinstance(Args[1], ast.Constant) else ast.unparse(Args[1])[2:]
-                if not str(Text).startswith(Want):
+                Text = str(Args[1].value) if isinstance(Args[1], ast.Constant) else ast.unparse(Args[1])[2:]
+                if not Text.startswith(Want):
                     self.Add(Node, f'3 location "{Text}" does not name this function ("{Want}")')
             if Node.name != "__init__" and not isinstance(Last.body[-1], (ast.Return, ast.Raise)):
                 self.Add(Node, "4 the Exception handler must end in return <safe default> or raise")
@@ -176,7 +178,7 @@ class kPatternAudit:
 class kPatternAuditApp:
     """Command line: audit the given files, or every Python file in FOLDERS."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

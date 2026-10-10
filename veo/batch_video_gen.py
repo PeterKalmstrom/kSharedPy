@@ -84,6 +84,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from kFfmpeg import kFfmpeg
 from kGenAi import kGenAi
@@ -97,7 +98,8 @@ POLL_INTERVAL_SECONDS = 15
 class kVideoJob:
     """One video to generate. Optional settings (None/False) keep the API defaults."""
 
-    def __init__(self, Prompt, OutPath, Model, Resolution=None, NegativePrompt=None, ImagePath=None, Mute=False):
+    def __init__(self, Prompt: str, OutPath: str, Model: str, Resolution: str | None = None,
+                 NegativePrompt: str | None = None, ImagePath: str | None = None, Mute: bool = False) -> None:
         try:
             self.Prompt = Prompt
             self.OutPath = OutPath
@@ -110,7 +112,7 @@ class kVideoJob:
             kS.GlobalErrorHandler(e, "kVideoJob.__init__")
 
     @staticmethod
-    def FromSpec(SpecPath, Args):
+    def FromSpec(SpecPath: str, Args: argparse.Namespace) -> list["kVideoJob"]:
         """The jobs of a JSON spec file; a missing key falls back to the command-line value."""
         if kS.ErrorMode:
             return []
@@ -120,7 +122,7 @@ class kVideoJob:
                 return []
             if not isinstance(Spec, list):
                 raise ToolInputException(f"spec must be a JSON list of {{prompt, out}} entries: {SpecPath}")
-            Jobs = []
+            Jobs: list[kVideoJob] = []
             for Index, Entry in enumerate(Spec):
                 if not isinstance(Entry, dict) or not Entry.get("prompt") or not Entry.get("out"):
                     raise ToolInputException(f"spec entry {Index} needs \"prompt\" and \"out\": {SpecPath}")
@@ -136,7 +138,7 @@ class kVideoJob:
             return []
 
     @staticmethod
-    def Validate(Jobs):
+    def Validate(Jobs: list["kVideoJob"]) -> None:
         """Preconditions of every job, checked before the first paid call: image files exist, ffmpeg for mute."""
         if kS.ErrorMode:
             return
@@ -156,18 +158,18 @@ class kVideoJob:
 class kVideoGenerator:
     """Generates videos through one Gemini client: submit, poll, download, save."""
 
-    def __init__(self, ApiKey, Quiet, PollInterval=POLL_INTERVAL_SECONDS):
+    def __init__(self, ApiKey: str, Quiet: bool, PollInterval: float = POLL_INTERVAL_SECONDS) -> None:
         try:
             self.Quiet = Quiet
             self.PollInterval = PollInterval
             self.GenAi, self.Types, self.Errors = kGenAi.Load("batch_video_gen.py")
-            self.Client = self.GenAi.Client(api_key=ApiKey) if self.GenAi is not None else None
+            self.Client: Any =self.GenAi.Client(api_key=ApiKey) if self.GenAi is not None else None
         except kToolException:
             raise
         except Exception as e:
             kS.GlobalErrorHandler(e, "kVideoGenerator.__init__")
 
-    def BuildConfig(self, Job):
+    def BuildConfig(self, Job: kVideoJob) -> Any:
         """GenerateVideosConfig for the optional settings, or None when none are set."""
         if kS.ErrorMode:
             return None
@@ -179,7 +181,7 @@ class kVideoGenerator:
             kS.GlobalErrorHandler(e, "kVideoGenerator.BuildConfig")
             return None
 
-    def LoadImage(self, Job):
+    def LoadImage(self, Job: kVideoJob) -> Any:
         """Starting-frame Image from a PNG/JPEG path, or None."""
         if kS.ErrorMode:
             return None
@@ -192,7 +194,7 @@ class kVideoGenerator:
             kS.GlobalErrorHandler(e, f"kVideoGenerator.LoadImage(image={Job.ImagePath})")
             return None
 
-    def Produce(self, Job):
+    def Produce(self, Job: kVideoJob) -> tuple[Any, str]:
         """Submit, poll and download one video. Returns (video, "") or (None, refusal text) when the API refuses."""
         if kS.ErrorMode:
             return None, ""
@@ -233,7 +235,7 @@ class kVideoGenerator:
             kS.GlobalErrorHandler(e, f"kVideoGenerator.Produce(out={Job.OutPath})")
             return None, ""
 
-    def StripAudio(self, OutPath):
+    def StripAudio(self, OutPath: str) -> None:
         """Remove the audio track in place (video stream copied, not re-encoded)."""
         if kS.ErrorMode:
             return
@@ -246,7 +248,7 @@ class kVideoGenerator:
             kS.GlobalErrorHandler(e, f"kVideoGenerator.StripAudio(out={OutPath})")
             return
 
-    def Generate(self, Job):
+    def Generate(self, Job: kVideoJob) -> bool:
         """Generate one video and save it. True on success, False when the API refused the job."""
         if kS.ErrorMode:
             return False
@@ -278,7 +280,7 @@ class kVideoGenerator:
 class kBatchVideoGenApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:
@@ -302,7 +304,7 @@ class kBatchVideoGenApp:
                                 help="Strip the audio track after download (needs ffmpeg)")
             Parser.add_argument("--quiet", action="store_true",
                                 help="Suppress per-job progress output. Errors still go to stderr.")
-            Args = Parser.parse_args()
+            Args: argparse.Namespace = Parser.parse_args()
 
             if not Args.prompt and not Args.spec:
                 raise ToolInputException("Either --prompt + --out OR --spec required")

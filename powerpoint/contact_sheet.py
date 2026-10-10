@@ -30,7 +30,7 @@ class kContactSheet:
     """Lays rendered slides out as a grid."""
 
     @staticmethod
-    def SlideNumber(Path):
+    def SlideNumber(Path: str) -> int:
         """The slide number in a render's name (s007.png -> 7), else 0 - the sort key and the caption."""
         if kS.ErrorMode:
             return 0
@@ -42,7 +42,7 @@ class kContactSheet:
             return 0
 
     @staticmethod
-    def FromFolder(Folder):
+    def FromFolder(Folder: str) -> list[str]:
         """The slide renders (PNG/JPEG) in Folder, in slide order."""
         if kS.ErrorMode:
             return []
@@ -59,7 +59,7 @@ class kContactSheet:
             return []
 
     @staticmethod
-    def Build(Files, Cols, SlideWidth, Out):
+    def Build(Files: list[str], Cols: int, SlideWidth: int, Out: str) -> str | None:
         """Paste the renders into one sheet and save it to Out."""
         if kS.ErrorMode:
             return None
@@ -89,7 +89,7 @@ class kContactSheet:
 class kContactSheetApp:
     """Command line."""
 
-    def Run(self):
+    def Run(self) -> int:
         if kS.ErrorMode:
             return 1
         try:

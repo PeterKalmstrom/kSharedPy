@@ -12,7 +12,9 @@ The first static-ffmpeg call may take ~30s to download ~80MB of static binaries;
 import importlib
 import importlib.util
 import shutil
+import os
 import subprocess
+from typing import Any, Sequence
 
 from kShared import ToolInputException, kS, kToolException
 
@@ -21,7 +23,7 @@ class kDependency:
     """Whether an optional package is installed - a precondition check, so a missing package is never caught."""
 
     @staticmethod
-    def Has(ModuleName):
+    def Has(ModuleName: str) -> bool:
         """True when ModuleName (dotted, e.g. "google.genai") can be imported. Checks each parent first, because
         find_spec of a submodule raises when its parent package is missing."""
         if kS.ErrorMode:
@@ -41,7 +43,7 @@ class kFfmpeg:
     """ffmpeg/ffprobe: found on PATH or through static-ffmpeg, plus media probes."""
 
     @staticmethod
-    def AddStaticPaths():
+    def AddStaticPaths() -> bool:
         """Put the static-ffmpeg binaries on PATH when that package is installed. True when it was."""
         if kS.ErrorMode:
             return False
@@ -55,7 +57,7 @@ class kFfmpeg:
             return False
 
     @staticmethod
-    def Find():
+    def Find() -> str:
         """The path of ffmpeg: from PATH, else from static-ffmpeg when installed; "" when there is none."""
         if kS.ErrorMode:
             return ""
@@ -69,7 +71,7 @@ class kFfmpeg:
             return ""
 
     @staticmethod
-    def Ensure():
+    def Ensure() -> tuple[str, str]:
         """Return (ffmpeg_path, ffprobe_path), prepending the static-ffmpeg binaries to PATH if needed."""
         if kS.ErrorMode:
             return ("", "")
@@ -91,7 +93,7 @@ class kFfmpeg:
             return ("", "")
 
     @staticmethod
-    def Run(Args):
+    def Run(Args: Sequence[Any]) -> bool:
         """Run ffmpeg quietly (-loglevel error -y) with Args; a failing ffmpeg is reported (unexpected). True on
         success."""
         if kS.ErrorMode:
@@ -104,7 +106,7 @@ class kFfmpeg:
             return False
 
     @staticmethod
-    def ProbeDurationSeconds(Path):
+    def ProbeDurationSeconds(Path: str | os.PathLike[str]) -> float:
         """The duration of a media file in seconds via ffprobe."""
         if kS.ErrorMode:
             return 0.0
@@ -122,7 +124,7 @@ class kFfmpeg:
             return 0.0
 
     @staticmethod
-    def ProbeAudioStreamCount(Path):
+    def ProbeAudioStreamCount(Path: str | os.PathLike[str]) -> int:
         """How many audio streams a media file has, via ffprobe."""
         if kS.ErrorMode:
             return 0
