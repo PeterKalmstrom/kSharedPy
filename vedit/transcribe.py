@@ -20,7 +20,9 @@ Flags:
     --language CODE  Language hint (default: en). Use "auto" to detect.
     --device DEV     cpu | cuda. Default: cpu.
     --compute-type T Quantization. Default: int8 (cpu) / float16 (cuda).
-    --quiet          Suppress per-segment progress lines. Errors still on stderr.
+    --quiet          No progress lines on stderr. Errors still on stderr.
+
+Output: the transcript file only - stdout stays empty; progress goes to stderr.
 
 First run downloads the model (~470MB for medium.en) to the HF cache.
 """
@@ -29,11 +31,11 @@ First run downloads the model (~470MB for medium.en) to the HF cache.
 # dependencies = ["faster-whisper", "static-ffmpeg"]
 # ///
 import argparse
-import sys
 import time
 from pathlib import Path
 from typing import Any
 
+from kConsole import kConsole
 from kFfmpeg import kDependency, kFfmpeg
 from kJsonFile import kJsonFile
 from kShared import ToolInputException, kRun, kS, kToolException
@@ -42,15 +44,13 @@ from kShared import ToolInputException, kRun, kS, kToolException
 class kTranscriber:
     """One faster-whisper run over one media file."""
 
-    def __init__(self, Input: Path, Model: str, Language: str, Device: str, ComputeType: str | None,
-                 Quiet: bool) -> None:
+    def __init__(self, Input: Path, Model: str, Language: str, Device: str, ComputeType: str | None) -> None:
         try:
             self.Input = Input
             self.Model = Model
             self.Language = Language
             self.Device = Device
             self.ComputeType = ComputeType or ("int8" if Device == "cpu" else "float16")
-            self.Quiet = Quiet
         except Exception as e:
             kS.GlobalErrorHandler(e, "kTranscriber.__init__")
 
@@ -98,9 +98,7 @@ class kTranscriber:
             return None
         try:
             from faster_whisper import WhisperModel  # optional package, checked by the App
-            if not self.Quiet:
-                print(f"[vedit/transcribe] loading {self.Model} on {self.Device} ({self.ComputeType})",
-                      file=sys.stderr)
+            kConsole.Progress(f"[vedit/transcribe] loading {self.Model} on {self.Device} ({self.ComputeType})")
             self.StartTime = time.monotonic()
             Model = WhisperModel(self.Model, device=self.Device, compute_type=self.ComputeType)
             Language = None if self.Language == "auto" else self.Language
@@ -112,20 +110,17 @@ class kTranscriber:
                 vad_filter=True,
                 vad_parameters={"min_silence_duration_ms": 500},
             )
-            if not self.Quiet:
-                print(f"[vedit/transcribe] detected language={Info.language} "
-                      f"prob={Info.language_probability:.2f} duration={Info.duration:.1f}s",
-                      file=sys.stderr)
+            kConsole.Progress(f"[vedit/transcribe] detected language={Info.language} "
+                              f"prob={Info.language_probability:.2f} duration={Info.duration:.1f}s")
             OutSegments = []
             LastPrint = 0.0
             for Segment in SegmentsIter:
                 OutSegments.append(kTranscriber.SegmentToDict(Segment))
-                if not self.Quiet and Segment.end - LastPrint >= 30.0:
+                if Segment.end - LastPrint >= 30.0:
                     Elapsed = time.monotonic() - self.StartTime
                     Speed = Segment.end / Elapsed if Elapsed > 0 else 0
-                    print(f"  {Segment.end:7.1f}s / {Info.duration:.1f}s "
-                          f"({100*Segment.end/Info.duration:5.1f}%, {Speed:.2f}x realtime)",
-                          file=sys.stderr)
+                    kConsole.Progress(f"  {Segment.end:7.1f}s / {Info.duration:.1f}s "
+                                      f"({100*Segment.end/Info.duration:5.1f}%, {Speed:.2f}x realtime)")
                     LastPrint = Segment.end
             self.Duration = Info.duration
             return {
@@ -159,6 +154,7 @@ class kTranscribeApp:
                                 help="Override quantization (int8/float16/float32)")
             Parser.add_argument("--quiet", action="store_true")
             Args = Parser.parse_args()
+            kConsole.Quiet = Args.quiet
 
             Input = Path(Args.inp)
             Out = Path(Args.out)
@@ -169,19 +165,16 @@ class kTranscribeApp:
                 raise ToolInputException(
                     "faster-whisper not installed.\n"
                     "Run with: uv run transcribe.py ... (the script declares faster-whisper and static-ffmpeg)")
-            Transcriber = kTranscriber(Input, Args.model, Args.language, Args.device, Args.compute_type,
-                                       Args.quiet)
+            Transcriber = kTranscriber(Input, Args.model, Args.language, Args.device, Args.compute_type)
             Payload = Transcriber.Transcribe()
             if kS.ErrorMode or Payload is None:
                 return 1
             if not kJsonFile.Save(Out, Payload):
                 return 1
             Elapsed = time.monotonic() - Transcriber.StartTime
-            if not Args.quiet:
-                Speed = Transcriber.Duration / Elapsed if Elapsed > 0 else 0
-                print(f"[vedit/transcribe] done in {Elapsed:.1f}s ({Speed:.2f}x realtime). "
-                      f"{len(Payload['segments'])} segments → {Out}",
-                      file=sys.stderr)
+            Speed = Transcriber.Duration / Elapsed if Elapsed > 0 else 0
+            kConsole.Progress(f"[vedit/transcribe] done in {Elapsed:.1f}s ({Speed:.2f}x realtime). "
+                              f"{len(Payload['segments'])} segments → {Out}")
             return 0
         except kToolException:
             raise

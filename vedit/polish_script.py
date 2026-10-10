@@ -17,6 +17,9 @@ Flags:
     --voice NAME     Voice/style hint sent to the model. Default: "Peter Kalmström —
                      casual tutorial first-person, occasional 'so' / 'now' / 'let's'
                      transitions, instructional but warm".
+    --quiet          No progress lines on stderr (errors still show).
+
+Output: the polished file only - stdout stays empty; progress goes to stderr.
 
 The model is told to PRESERVE every fact, step, and proper noun. It removes
 verbal restarts, filler ("you know", "actually"), redundant phrasing, and
@@ -29,9 +32,9 @@ or formalize the voice.
 # ///
 
 import argparse
-import sys
 from pathlib import Path
 
+from kConsole import kConsole
 from kGenAi import kGenAi
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
@@ -70,7 +73,7 @@ class kScriptPolisher:
         try:
             genai, types, _Errors = kGenAi.Load("polish_script.py")
             Prompt = PROMPT.format(voice=Voice, text=Text)
-            sys.stderr.write(f"[vedit/polish_script] polishing {len(Text):,} chars via {Model}…\n")
+            kConsole.Progress(f"[vedit/polish_script] polishing {len(Text):,} chars via {Model}…")
             Client = genai.Client()
             Response = Client.models.generate_content(
                 model=Model,
@@ -106,7 +109,9 @@ class kPolishScriptApp:
                 "occasional 'so' / 'now' / 'let's' transitions, "
                 "instructional but warm"
             ))
+            Parser.add_argument("--quiet", action="store_true")
             Args = Parser.parse_args()
+            kConsole.Quiet = Args.quiet
 
             Input = Path(Args.inp)
             Out = Path(Args.out)
@@ -119,9 +124,7 @@ class kPolishScriptApp:
                 return 1
             Out.parent.mkdir(parents=True, exist_ok=True)
             Out.write_text(Polished + "\n", encoding="utf-8")
-            sys.stderr.write(
-                f"[vedit/polish_script] {len(Text):,} → {len(Polished):,} chars → {Out}\n"
-            )
+            kConsole.Progress(f"[vedit/polish_script] {len(Text):,} → {len(Polished):,} chars → {Out}")
             return 0
         except kToolException:
             raise

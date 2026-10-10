@@ -32,8 +32,9 @@ Flags:
     --out PATH      Output .tscproj path.  Written as a bundle if input was one.
     --src NAME      Filter: only patch tracks whose source bin entry matches this
                     filename substring.  Default: first .trec entry found.
-    --quiet         Suppress progress output.
+    --quiet         No progress lines on stderr (warnings and errors still show).
 
+Output: the project file only - stdout stays empty; progress goes to stderr.
 Standard library only (plain `python edl_to_tscproj.py ...` works too).
 """
 # /// script
@@ -44,11 +45,11 @@ Standard library only (plain `python edl_to_tscproj.py ...` works too).
 import argparse
 import copy
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
 from _vedit_data import kVeditData
+from kConsole import kConsole
 from kJsonFile import kJsonFile
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
 
@@ -223,7 +224,7 @@ class kTscprojPatcher:
             return 0
 
     @staticmethod
-    def LinkMedia(SourceFile: Path, DestFile: Path, Name: str, Quiet: bool) -> None:
+    def LinkMedia(SourceFile: Path, DestFile: Path, Name: str) -> None:
         """Hard-link (or else symlink) one media file into the output bundle. When neither works the file is not
         needed for the edit itself: a warning tells the person to copy it."""
         if kS.ErrorMode:
@@ -231,27 +232,23 @@ class kTscprojPatcher:
         try:
             try:
                 os.link(SourceFile, DestFile)
-                if not Quiet:
-                    print(f"[vedit/edl_to_tscproj] hard-linked {Name}", file=sys.stderr)
+                kConsole.Progress(f"[vedit/edl_to_tscproj] hard-linked {Name}")
                 return
             except OSError:  # ERROR-SUPPRESSED-JUSTIFIED: no hard links here (other volume, FAT) - a symlink is the corrected path
                 pass
             try:
                 DestFile.symlink_to(SourceFile.resolve())
-                if not Quiet:
-                    print(f"[vedit/edl_to_tscproj] symlinked {Name}", file=sys.stderr)
+                kConsole.Progress(f"[vedit/edl_to_tscproj] symlinked {Name}")
             except OSError as Failure:  # ERROR-SUPPRESSED-JUSTIFIED: the project is still written; the warning tells the person to copy the media by hand
-                sys.stderr.write(
-                    f"WARNING: could not link {Name}: {Failure}\n"
-                    f"  Copy it manually: {SourceFile} → {DestFile}\n"
-                )
+                kConsole.Warn(f"WARNING: could not link {Name}: {Failure}\n"
+                              f"  Copy it manually: {SourceFile} → {DestFile}")
         except Exception as e:
             kS.GlobalErrorHandler(e, f"kTscprojPatcher.LinkMedia(file={SourceFile})")
             return
 
     @staticmethod
-    def SetupOutputBundle(InputWasBundle: bool, SourceBundleDir: Path, OutPath: Path, Project: dict[str, Any],
-                          Quiet: bool) -> Path | None:
+    def SetupOutputBundle(InputWasBundle: bool, SourceBundleDir: Path, OutPath: Path,
+                          Project: dict[str, Any]) -> Path | None:
         """Create a bundle directory at OutPath and hard-link (or symlink) media files
         from the source bundle into it.  Returns the path of the JSON file to write.
 
@@ -274,7 +271,7 @@ class kTscprojPatcher:
                 DestFile = OutPath / SourceName
                 if not SourceFile.exists() or DestFile.exists():
                     continue
-                kTscprojPatcher.LinkMedia(SourceFile, DestFile, SourceName, Quiet)
+                kTscprojPatcher.LinkMedia(SourceFile, DestFile, SourceName)
             return OutJson
         except Exception as e:
             kS.GlobalErrorHandler(e, f"kTscprojPatcher.SetupOutputBundle(out={OutPath})")
@@ -298,6 +295,7 @@ class kEdlToTscprojApp:
                                 help="Source filename substring to target (default: first .trec)")
             Parser.add_argument("--quiet", action="store_true")
             Args = Parser.parse_args()
+            kConsole.Quiet = Args.quiet
 
             InputWasBundle = Path(Args.tscproj).is_dir()
             TscprojFile = kTscprojPatcher.ResolveTscproj(Args.tscproj)
@@ -314,34 +312,28 @@ class kEdlToTscprojApp:
             SourceId = kTscprojPatcher.FindSourceId(Project, Args.src)
             if kS.ErrorMode:
                 return 1
-            if not Args.quiet:
-                SourceName = str(SourceId)
-                for Entry in Project.get("sourceBin", []):
-                    if Entry["id"] == SourceId:
-                        SourceName = Entry["src"]
-                        break
-                TotalKeep = sum(Segment["end"] - Segment["start"] for Segment in KeepSegments)
-                print(
-                    f"[vedit/edl_to_tscproj] source bin id={SourceId} ({SourceName}), "
-                    f"{len(KeepSegments)} keep segments, {TotalKeep:.1f}s total",
-                    file=sys.stderr,
-                )
+            SourceName = str(SourceId)
+            for Entry in Project.get("sourceBin", []):
+                if Entry["id"] == SourceId:
+                    SourceName = Entry["src"]
+                    break
+            TotalKeep = sum(Segment["end"] - Segment["start"] for Segment in KeepSegments)
+            kConsole.Progress(f"[vedit/edl_to_tscproj] source bin id={SourceId} ({SourceName}), "
+                              f"{len(KeepSegments)} keep segments, {TotalKeep:.1f}s total")
             NextId = [kTscprojPatcher.MaxIdIn(Project) + 1]
             Patched = kTscprojPatcher.PatchTracks(Project, SourceId, KeepSegments, NextId)
             if kS.ErrorMode:
                 return 1
             if Patched == 0:
-                sys.stderr.write("WARNING: no matching tracks found — output is unchanged\n")
-            elif not Args.quiet:
-                print(f"[vedit/edl_to_tscproj] patched {Patched} track(s)", file=sys.stderr)
-            OutJson = kTscprojPatcher.SetupOutputBundle(InputWasBundle, SourceBundleDir, Path(Args.out), Project,
-                                                        Args.quiet)
+                kConsole.Warn("WARNING: no matching tracks found — output is unchanged")
+            else:
+                kConsole.Progress(f"[vedit/edl_to_tscproj] patched {Patched} track(s)")
+            OutJson = kTscprojPatcher.SetupOutputBundle(InputWasBundle, SourceBundleDir, Path(Args.out), Project)
             if kS.ErrorMode or OutJson is None:
                 return 1
             if not kJsonFile.Save(OutJson, Project):
                 return 1
-            if not Args.quiet:
-                print(f"[vedit/edl_to_tscproj] wrote {OutJson}", file=sys.stderr)
+            kConsole.Progress(f"[vedit/edl_to_tscproj] wrote {OutJson}")
             return 0
         except kToolException:
             raise

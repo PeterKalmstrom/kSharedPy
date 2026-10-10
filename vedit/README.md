@@ -136,7 +136,13 @@ Five metrics are checked: `mean_volume_db`, `max_volume_db`, `integrated_lufs`, 
 - ffmpeg/ffprobe are bundled via the `static-ffmpeg` PyPI package — no system install needed. First run downloads ~80MB to the uv cache.
 - `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) must be set in the environment for any LLM step: `propose.py` (retake-finder, filler-trim, multimodal validate), `subtitles.py` (polish, by default), `polish_script.py` (always).
 - All scripts force UTF-8 stdout for Windows safety.
-- All scripts accept `--quiet` for use in larger pipelines (errors still go to stderr).
+- All scripts accept `--quiet` for use in larger pipelines. Output rules (`kConsole`): stdout carries only
+  what a caller may parse (`review.py` / `srt_to_script.py` without `--out`, `audio_check.py`'s report or
+  calibrated profile); progress goes to stderr and `--quiet` suppresses it; warnings and errors always show on stderr.
+- `propose.py` is the CLI only; its logic lives in sibling modules: `_silence.py` (kSilenceDetector: ffmpeg
+  silence / freeze / screen activity), `_gemini_cuts.py` (kGeminiCuts: the prompts and Gemini passes),
+  `_cut_editor.py` (kCutEditor: interval arithmetic, word snap, EDL). The pure parts are unit-tested in
+  `tests/test_cut_editor.py`.
 
 ## Camtasia .trec files
 

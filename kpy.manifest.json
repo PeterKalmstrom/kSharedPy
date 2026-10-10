@@ -18,6 +18,9 @@
         { "Out": "veo/kJsonFile.py",                "Parts": [ "kshared/kJsonFile.py" ] },
         { "Out": "vedit/kJsonFile.py",              "Parts": [ "kshared/kJsonFile.py" ] },
         { "Out": "veo/kFfmpeg.py",                  "Parts": [ "kshared/kFfmpeg.py" ] },
-        { "Out": "vedit/kFfmpeg.py",                "Parts": [ "kshared/kFfmpeg.py" ] }
+        { "Out": "vedit/kFfmpeg.py",                "Parts": [ "kshared/kFfmpeg.py" ] },
+        { "Out": "gemini/kConsole.py",              "Parts": [ "kshared/kConsole.py" ] },
+        { "Out": "veo/kConsole.py",                 "Parts": [ "kshared/kConsole.py" ] },
+        { "Out": "vedit/kConsole.py",               "Parts": [ "kshared/kConsole.py" ] }
     ]
 }

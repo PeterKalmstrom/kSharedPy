@@ -12,6 +12,8 @@ Usage:
 
 Exits 0 on success, 1 on any failure with a "FAIL: ..." diagnostic message
 (4 if an unexpected error was reported and its report waits for the user's yes).
+Output: "PASS: ..." is the one stdout line; progress goes to stderr (--quiet
+suppresses it), "FAIL: ..." to stderr.
 The test image is written to a temporary folder under kSharedPy/_scratch/ (inside
 the workspace, never the user profile) and removed afterwards.
 """
@@ -27,6 +29,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from kConsole import kConsole
 from kShared import ToolReportableException, kRun, kS, kToolException
 
 THIS_DIR = Path(__file__).resolve().parent
@@ -71,7 +74,8 @@ class kSmokeTest:
                 raise kSmokeTest.Fail(f"batch_image_gen.py exit {Result.returncode}\n"
                                       f"STDOUT:\n{Result.stdout}\nSTDERR:\n{Result.stderr}")
             if not OutPath.exists():
-                raise kSmokeTest.Fail(f"output file not created at {OutPath}\nSTDOUT:\n{Result.stdout}")
+                raise kSmokeTest.Fail(f"output file not created at {OutPath}\n"
+                                      f"STDOUT:\n{Result.stdout}\nSTDERR:\n{Result.stderr}")
             return Result
         except kToolException:
             raise
@@ -114,7 +118,8 @@ class kSmokeTestApp:
         try:
             Parser = argparse.ArgumentParser(description="Smoke test for batch_image_gen.py.",
                                              formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
-            Parser.parse_args()
+            Parser.add_argument("--quiet", action="store_true", help="No progress line on stderr.")
+            kConsole.Quiet = Parser.parse_args().quiet
             if not os.environ.get("GEMINI_API_KEY"):
                 raise kSmokeTest.Fail("GEMINI_API_KEY environment variable not set")
             if not TARGET_SCRIPT.exists():
@@ -122,12 +127,12 @@ class kSmokeTestApp:
             SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryDirectory(prefix="smoke-", dir=SCRATCH_DIR) as Folder:
                 OutPath = Path(Folder) / "smoke.png"
-                print(f"Generating smoke image to {OutPath}...")
+                kConsole.Progress(f"Generating smoke image to {OutPath}...")
                 kSmokeTest.Generate(OutPath)
                 Size, Format = kSmokeTest.Check(OutPath)
             if kS.ErrorMode:
                 return 1
-            print(f"PASS: generated {Size} bytes, valid {Format} header.")
+            kConsole.Result(f"PASS: generated {Size} bytes, valid {Format} header.")
             return 0
         except kToolException:
             raise

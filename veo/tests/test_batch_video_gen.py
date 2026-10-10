@@ -105,7 +105,9 @@ class kVideoGenTests(unittest.TestCase):
         self.assertEqual(Code, 0, Err)
         with open(Out, "rb") as File:
             self.assertEqual(File.read(), b"STUBVIDEO:waves")
-        self.assertIn("1/1 videos generated.", Stdout)
+        self.assertIn("1/1 videos generated.", Err)  # progress is stderr (kConsole, 2026-10-10)
+        self.assertIn("  polling", Err)
+        self.assertEqual(Stdout, "")
         Calls = H.StubLog(self.Log)
         self.assertEqual(Calls[0]["api_key"], H.DUMMY_KEY)
         Video = self.Videos()[0]
@@ -127,7 +129,8 @@ class kVideoGenTests(unittest.TestCase):
         self.assertIn("ERROR: APIError: 429 RESOURCE_EXHAUSTED stub refusal", Err)
         self.assertIn("ERROR: no video returned", Err)
         self.assertNotIn("Traceback", Err)
-        self.assertIn("2/4 videos generated.", Stdout)
+        self.assertIn("2/4 videos generated.", Err)
+        self.assertEqual(Stdout, "")
         for Name, Exists in (("one.mp4", True), ("two.mp4", False), ("three.mp4", False), ("four.mp4", True)):
             self.assertEqual(os.path.isfile(os.path.join(self.Work, Name)), Exists, Name)
         self.assertEqual([Video["model"] for Video in self.Videos()][3], "veo-3.1-fast-generate-preview")

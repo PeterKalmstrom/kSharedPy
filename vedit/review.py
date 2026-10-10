@@ -31,6 +31,10 @@ Flags:
     --context-s FLOAT  Seconds of transcript context to show before/after each
                        cut. Default: 3.0.
     --max-line LEN     Wrap transcript lines longer than this. Default: 100.
+    --quiet            No progress line on stderr after writing --out.
+
+Output: without --out the markdown (or the restored EDL JSON) is stdout, byte for byte what --out would hold;
+the "wrote ..." status line goes to stderr.
 """
 # /// script
 # requires-python = ">=3.10"
@@ -38,11 +42,11 @@ Flags:
 # ///
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
 from _transcript import kTranscript
+from kConsole import kConsole
 from _vedit_data import kVeditData
 from kShared import ToolInputException, kRun, kS, kToolException
 
@@ -208,7 +212,7 @@ class kReviewApp:
                 Path(OutPath).parent.mkdir(parents=True, exist_ok=True)
                 Path(OutPath).write_text(Text, encoding="utf-8")
                 return True
-            sys.stdout.write(Text)
+            kConsole.Result(Text, End="")
             return False
         except Exception as e:
             kS.GlobalErrorHandler(e, f"kReviewApp.WriteOrPrint(file={OutPath})")
@@ -229,7 +233,9 @@ class kReviewApp:
                                 help="(restore) Flip cuts in CATEGORY to keep:true, write new EDL.")
             Parser.add_argument("--context-s", type=float, default=3.0)
             Parser.add_argument("--max-line", type=int, default=100)
+            Parser.add_argument("--quiet", action="store_true")
             Args = Parser.parse_args()
+            kConsole.Quiet = Args.quiet
 
             Edl = kVeditData.LoadEdl(Args.edl)
             if kS.ErrorMode:
@@ -240,7 +246,7 @@ class kReviewApp:
                 if kS.ErrorMode:
                     return 1
                 if kReviewApp.WriteOrPrint(Args.out, json.dumps(NewEdl, ensure_ascii=False, indent=2)):
-                    sys.stderr.write(f"[vedit/review] restored {Restored} '{Args.restore}' cuts → {Args.out}\n")
+                    kConsole.Progress(f"[vedit/review] restored {Restored} '{Args.restore}' cuts → {Args.out}")
                 return 0
 
             if not Args.transcript:
@@ -252,7 +258,7 @@ class kReviewApp:
             if kS.ErrorMode:
                 return 1
             if kReviewApp.WriteOrPrint(Args.out, Markdown):
-                sys.stderr.write(f"[vedit/review] wrote {Args.out}\n")
+                kConsole.Progress(f"[vedit/review] wrote {Args.out}")
             return 0
         except kToolException:
             raise

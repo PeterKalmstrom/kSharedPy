@@ -48,6 +48,11 @@ Exit codes and errors (the kShared error pattern):
     remaining jobs are skipped. The spec is validated in full before the first
     paid call.
 
+Output (kConsole rules): stdout stays empty - the images are the result and the
+exit code says whether all were made. Progress ("Generating ...", "saved",
+"N/M images generated.") goes to stderr and --quiet suppresses it; per-job
+"ERROR: ..." lines go to stderr always. (Before 2026-10-10 progress went to stdout.)
+
 Notes:
     - Always prompt with "no text, no letters, no words, no logos, no captions"
       to avoid AI generators baking text into the image. Overlay text in the
@@ -68,10 +73,10 @@ Notes:
 
 import argparse
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
+from kConsole import kConsole
 from kGenAi import kGenAi
 from kJsonFile import kJsonFile
 from kShared import ToolInputException, kRun, kS, kToolException
@@ -119,9 +124,8 @@ class kImageJob:
 class kImageGenerator:
     """Generates images through one Gemini client."""
 
-    def __init__(self, ApiKey: str, Quiet: bool) -> None:
+    def __init__(self, ApiKey: str) -> None:
         try:
-            self.Quiet = Quiet
             self.GenAi, self.Types, self.Errors = kGenAi.Load("batch_image_gen.py")
             self.Client: Any =self.GenAi.Client(api_key=ApiKey) if self.GenAi is not None else None
         except kToolException:
@@ -169,25 +173,23 @@ class kImageGenerator:
         if kS.ErrorMode:
             return False
         try:
-            if not self.Quiet:
-                print(f"Generating {Job.OutPath}...", flush=True)
+            kConsole.Progress(f"Generating {Job.OutPath}...")
             Response, Refusal = self.Request(Job)
             if kS.ErrorMode:
                 return False
             if Response is None:
-                sys.stderr.write(f"ERROR: {Refusal}\n")  # errors always print, even in quiet mode
+                kConsole.Warn(f"ERROR: {Refusal}")  # errors always print, even in quiet mode
                 return False
             Data = self.ImageBytes(Response)
             if kS.ErrorMode:
                 return False
             if Data is None:
-                sys.stderr.write(f"ERROR: no image returned for {Job.OutPath}\n")
+                kConsole.Warn(f"ERROR: no image returned for {Job.OutPath}")
                 return False
             Path(Job.OutPath).parent.mkdir(parents=True, exist_ok=True)
             with open(Job.OutPath, "wb") as File:
                 File.write(Data)
-            if not self.Quiet:
-                print(f"  saved ({os.path.getsize(Job.OutPath)} bytes)")
+            kConsole.Progress(f"  saved ({os.path.getsize(Job.OutPath)} bytes)")
             return True
         except kToolException:
             raise
@@ -217,6 +219,7 @@ class kBatchImageGenApp:
             Parser.add_argument("--quiet", action="store_true",
                                 help="Suppress per-job progress output. Errors still go to stderr.")
             Args: argparse.Namespace = Parser.parse_args()
+            kConsole.Quiet = Args.quiet
 
             if not Args.prompt and not Args.spec:
                 raise ToolInputException("Either --prompt + --out OR --spec required")
@@ -231,7 +234,7 @@ class kBatchImageGenApp:
             if kS.ErrorMode:
                 return 1
 
-            Generator = kImageGenerator(ApiKey, Args.quiet)
+            Generator = kImageGenerator(ApiKey)
             Successes = 0
             for Job in Jobs:
                 if Generator.Generate(Job):
@@ -239,8 +242,7 @@ class kBatchImageGenApp:
             if kS.ErrorMode:
                 return 1
 
-            if not Args.quiet:
-                print(f"\n{Successes}/{len(Jobs)} images generated.")
+            kConsole.Progress(f"\n{Successes}/{len(Jobs)} images generated.")
             return 0 if Successes == len(Jobs) else 1
         except kToolException:
             raise

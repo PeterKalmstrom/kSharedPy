@@ -93,7 +93,8 @@ class kImageGenTests(unittest.TestCase):
         self.assertEqual(Code, 0, Err)
         with open(Out, "rb") as File:
             self.assertEqual(File.read(), PNG + b"STUB:an apple")
-        self.assertIn("1/1 images generated.", Stdout)
+        self.assertIn("1/1 images generated.", Err)  # progress is stderr (kConsole, 2026-10-10)
+        self.assertEqual(Stdout, "")
         Calls = H.StubLog(self.Log)
         self.assertEqual([Call["kind"] for Call in Calls], ["client", "generate_content"])
         self.assertEqual(Calls[0]["api_key"], H.DUMMY_KEY)
@@ -111,7 +112,8 @@ class kImageGenTests(unittest.TestCase):
         self.assertIn("ERROR: APIError: 400 stub refusal", Err)
         self.assertIn("ERROR: no image returned for three.png", Err)
         self.assertNotIn("Traceback", Err)
-        self.assertIn("2/4 images generated.", Stdout)
+        self.assertIn("2/4 images generated.", Err)
+        self.assertEqual(Stdout, "")
         for Name, Exists in (("one.png", True), ("two.png", False), ("three.png", False), ("four.png", True)):
             self.assertEqual(os.path.isfile(os.path.join(self.Work, Name)), Exists, Name)
         Models = [Call["model"] for Call in H.StubLog(self.Log) if Call["kind"] == "generate_content"]
@@ -123,6 +125,7 @@ class kImageGenTests(unittest.TestCase):
         self.assertEqual(Code, 1)
         self.assertEqual(Stdout, "")
         self.assertIn("ERROR: APIError", Err)
+        self.assertNotIn("Generating", Err)  # --quiet suppresses progress only
 
     def test_UnexpectedFailureIsReported(self):
         Code, _, Err = self.Run("--prompt", "an apple", "--out", "a.png",

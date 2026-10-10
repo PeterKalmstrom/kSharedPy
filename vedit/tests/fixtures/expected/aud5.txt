@@ -20,4 +20,3 @@ rc=0
 }
 
 --- stderr
-[vedit/audio_check] calibrated profile → <WORK>/profile2.json

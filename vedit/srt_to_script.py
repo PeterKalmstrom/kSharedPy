@@ -16,6 +16,9 @@ Flags:
                          timeline. Default: one line per cue.
     --width N           Wrap output text at N characters. Default: 80. Set 0
                          to disable wrapping.
+    --quiet             No progress line on stderr after writing --out.
+
+Output: without --out the script text is stdout; the status line after writing --out goes to stderr.
 """
 # /// script
 # requires-python = ">=3.10"
@@ -23,11 +26,11 @@ Flags:
 # ///
 import argparse
 import re
-import sys
 import textwrap
 from pathlib import Path
 from typing import Any
 
+from kConsole import kConsole
 from kShared import ToolInputException, kRun, kS, kToolException
 
 TIMESTAMP_PATTERN = re.compile(
@@ -155,7 +158,9 @@ class kSrtToScriptApp:
             Parser.add_argument("--paragraphs", action="store_true",
                                 help="Group cues into paragraphs at 1.5s+ gaps.")
             Parser.add_argument("--width", type=int, default=80, help="Wrap width. 0=off.")
+            Parser.add_argument("--quiet", action="store_true")
             Args = Parser.parse_args()
+            kConsole.Quiet = Args.quiet
 
             Input = Path(Args.inp)
             if not Input.exists():
@@ -168,9 +173,9 @@ class kSrtToScriptApp:
                 Out = Path(Args.out)
                 Out.parent.mkdir(parents=True, exist_ok=True)
                 Out.write_text(Text, encoding="utf-8")
-                sys.stderr.write(f"[vedit/srt_to_script] {len(Cues)} cues → {Out}\n")
+                kConsole.Progress(f"[vedit/srt_to_script] {len(Cues)} cues → {Out}")
             else:
-                sys.stdout.write(Text)
+                kConsole.Result(Text, End="")
             return 0
         except kToolException:
             raise

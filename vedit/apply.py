@@ -36,7 +36,10 @@ Flags:
     --pix-fmt FMT       Output pixel format. Default: yuv420p. Camtasia
                         tscc2 records yuv444p which most consumer players
                         cannot decode — yuv420p is the safe default.
-    --quiet             Less verbose output.
+    --quiet             No progress lines on stderr and ffmpeg at -loglevel error
+                        (warnings and errors still show).
+
+Output: the video file only - stdout stays empty; progress goes to stderr.
 """
 # /// script
 # requires-python = ">=3.10"
@@ -45,12 +48,12 @@ Flags:
 
 import argparse
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
+from kConsole import kConsole
 from kFfmpeg import kFfmpeg
 from _vedit_data import kVeditData
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
@@ -189,8 +192,7 @@ class kEdlCutter:
                 "-movflags", "+faststart",
                 str(Out),
             ], Quiet)
-            if not Quiet:
-                print(f"[vedit/apply] re-encode: {len(Ranges)} keep ranges → {Out}", file=sys.stderr)
+            kConsole.Progress(f"[vedit/apply] re-encode: {len(Ranges)} keep ranges → {Out}")
             try:
                 return subprocess.run(Command).returncode
             finally:
@@ -227,7 +229,7 @@ class kEdlCutter:
                     ], Quiet)
                     ReturnCode = subprocess.run(Command).returncode
                     if ReturnCode != 0:
-                        sys.stderr.write(f"failed to extract range {Index} ({Start}–{End})\n")
+                        kConsole.Warn(f"failed to extract range {Index} ({Start}–{End})")
                         return ReturnCode
                     Parts.append(Part)
                 ListPath.write_text("\n".join(f"file '{Part.as_posix()}'" for Part in Parts), encoding="utf-8")
@@ -277,6 +279,7 @@ class kApplyApp:
                                 help="Output pixel format. Default: yuv420p (broad compatibility).")
             Parser.add_argument("--quiet", action="store_true")
             Args = Parser.parse_args()
+            kConsole.Quiet = Args.quiet
 
             Input = Path(Args.inp)
             Out = Path(Args.out)
@@ -291,19 +294,17 @@ class kApplyApp:
             if kS.ErrorMode:
                 return 1
             Kept = sum(End - Start for Start, End in Ranges)
-            if not Args.quiet:
-                print(f"[vedit/apply] EDL: {len(Segments)} segments, {len(Ranges)} kept ranges, "
-                      f"{Kept:.1f}s of {Total:.1f}s ({100*Kept/Total:.1f}%)", file=sys.stderr)
+            kConsole.Progress(f"[vedit/apply] EDL: {len(Segments)} segments, {len(Ranges)} kept ranges, "
+                              f"{Kept:.1f}s of {Total:.1f}s ({100*Kept/Total:.1f}%)")
             Out.parent.mkdir(parents=True, exist_ok=True)
             StartTime = time.monotonic()
             if Args.copy:
                 ReturnCode = kEdlCutter.RunCopy(Input, Out, Ranges, Args.quiet)
             else:
                 AudioStreamCount = kFfmpeg.ProbeAudioStreamCount(Input)
-                if not Args.quiet and AudioStreamCount != 1:
-                    print(f"[vedit/apply] {AudioStreamCount} audio streams; using "
-                          f"{'amix' if Args.mix_audio else f'stream {Args.audio_stream}'}",
-                          file=sys.stderr)
+                if AudioStreamCount != 1:
+                    kConsole.Progress(f"[vedit/apply] {AudioStreamCount} audio streams; using "
+                                      f"{'amix' if Args.mix_audio else f'stream {Args.audio_stream}'}")
                 ReturnCode = kEdlCutter.RunReencode(Input, Out, Ranges,
                                                     Args.vcodec, Args.acodec, Args.crf, Args.preset,
                                                     Args.audio_stream, Args.mix_audio, AudioStreamCount,
@@ -312,8 +313,8 @@ class kApplyApp:
                                                     Args.quiet)
             if kS.ErrorMode:
                 return 1
-            if ReturnCode == 0 and not Args.quiet:
-                print(f"[vedit/apply] done in {time.monotonic() - StartTime:.1f}s → {Out}", file=sys.stderr)
+            if ReturnCode == 0:
+                kConsole.Progress(f"[vedit/apply] done in {time.monotonic() - StartTime:.1f}s → {Out}")
             return ReturnCode
         except kToolException:
             raise

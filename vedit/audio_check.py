@@ -45,7 +45,11 @@ Flags:
     --profile-out PATH  Where to write the profile (calibrate mode).
     --profile PATH      Profile JSON to check against (default mode).
     --tolerance-db F    Override default tolerance for all metrics. Default: 2.0.
-    --quiet             Suppress per-metric pass/fail rows on success.
+    --quiet             No progress lines on stderr. The stdout report (the measured
+                        metrics, the comparison rows, PASS/FAIL; the profile JSON
+                        in calibrate mode) is always printed.
+
+Output: stdout is the report a caller reads (PASS/FAIL, or the calibrated profile JSON); progress goes to stderr.
 """
 # /// script
 # requires-python = ">=3.10"
@@ -56,10 +60,10 @@ import argparse
 import json
 import re
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
+from kConsole import kConsole
 from kFfmpeg import kFfmpeg
 from kJsonFile import kJsonFile
 from kShared import ToolInputException, ToolReportableException, kRun, kS, kToolException
@@ -95,7 +99,7 @@ class kAudioMeter:
                 capture_output=True, text=True,
             )
             if Process.returncode != 0:
-                sys.stderr.write(Process.stderr[-2000:])
+                kConsole.Warn(Process.stderr[-2000:], End="")
                 raise ToolReportableException(f"{Name} failed")
             return Process.stderr
         except kToolException:
@@ -237,8 +241,8 @@ class kAudioCheckApp:
             Out = Path(ProfileOut)
             if not kJsonFile.Save(Out, Profile):
                 return 1
-            print(f"[vedit/audio_check] calibrated profile → {Out}", file=sys.stderr)
-            print(json.dumps(Profile, indent=2))
+            kConsole.Progress(f"[vedit/audio_check] calibrated profile → {Out}")
+            kConsole.Result(json.dumps(Profile, indent=2))
             return 0
         except Exception as e:
             kS.GlobalErrorHandler(e, f"kAudioCheckApp.Calibrate(file={ProfileOut})")
@@ -256,18 +260,18 @@ class kAudioCheckApp:
             Ok, Rows = kAudioMeter.CheckAgainst(Metrics, Profile)
             if kS.ErrorMode:
                 return 1
-            print()
-            print(f"Profile: {Profile.get('calibrated_from', '?')}")
-            print("Comparison:")
+            kConsole.Result()
+            kConsole.Result(f"Profile: {Profile.get('calibrated_from', '?')}")
+            kConsole.Result("Comparison:")
             for Row in Rows:
-                print(Row)
-            print()
+                kConsole.Result(Row)
+            kConsole.Result()
             if Ok:
-                print("PASS — audio quality within tolerance.")
+                kConsole.Result("PASS — audio quality within tolerance.")
                 return 0
-            print("FAIL — audio quality outside tolerance. Refuse to process.")
-            print("  Re-record with the correct mic, or recalibrate the profile if")
-            print("  your setup has genuinely changed.")
+            kConsole.Result("FAIL — audio quality outside tolerance. Refuse to process.")
+            kConsole.Result("  Re-record with the correct mic, or recalibrate the profile if")
+            kConsole.Result("  your setup has genuinely changed.")
             return 1
         except kToolException:
             raise
@@ -291,14 +295,13 @@ class kAudioCheckApp:
                                 help="Override all tolerances (calibrate mode writes this into profile).")
             Parser.add_argument("--quiet", action="store_true")
             Args = Parser.parse_args()
+            kConsole.Quiet = Args.quiet
 
             Input = Path(Args.inp)
             if not Input.exists():
                 raise ToolInputException(f"input not found: {Input}")
             kFfmpeg.Ensure()
-            if not Args.quiet:
-                print(f"[vedit/audio_check] measuring {Input.name} (stream a:{Args.audio_stream})…",
-                      file=sys.stderr)
+            kConsole.Progress(f"[vedit/audio_check] measuring {Input.name} (stream a:{Args.audio_stream})…")
             Metrics = kAudioMeter.Measure(Input, Args.audio_stream)
             if kS.ErrorMode:
                 return 1
@@ -307,10 +310,10 @@ class kAudioCheckApp:
                     raise ToolInputException("--profile-out required in calibrate mode")
                 return kAudioCheckApp.Calibrate(Input, Metrics, Args.tolerance_db, Args.profile_out)
             # Default mode: probe + optionally check
-            print(f"Measured audio (a:{Args.audio_stream}):")
+            kConsole.Result(f"Measured audio (a:{Args.audio_stream}):")
             for Key, Value in Metrics.items():
                 ValueText = "-inf" if Value == float("-inf") else f"{Value:.2f}"
-                print(f"  {Key:20} {ValueText}")
+                kConsole.Result(f"  {Key:20} {ValueText}")
             if Args.profile:
                 if not Path(Args.profile).exists():
                     raise ToolInputException(f"profile not found: {Path(Args.profile)}")

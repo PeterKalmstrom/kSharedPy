@@ -56,6 +56,12 @@ Exit codes and errors (the kShared error pattern):
     skipped. All jobs are validated (spec, image files, ffmpeg) before the first
     paid call.
 
+Output (kConsole rules): stdout stays empty - the videos are the result and the
+exit code says whether all were made. Progress ("Generating ...", the polling
+dots, "saved", "N/M videos generated.") goes to stderr and --quiet suppresses it;
+per-job "ERROR: ..." lines go to stderr always. (Before 2026-10-10 progress went
+to stdout.)
+
 Prompt tips:
     - Keep prompts to 3-5 sentences. Long rule lists degrade results.
     - Veo trains on natural cinematic descriptions, not specifications.
@@ -81,11 +87,11 @@ Transient errors - retry once before doing anything else:
 
 import argparse
 import os
-import sys
 import time
 from pathlib import Path
 from typing import Any
 
+from kConsole import kConsole
 from kFfmpeg import kFfmpeg
 from kGenAi import kGenAi
 from kJsonFile import kJsonFile
@@ -158,9 +164,8 @@ class kVideoJob:
 class kVideoGenerator:
     """Generates videos through one Gemini client: submit, poll, download, save."""
 
-    def __init__(self, ApiKey: str, Quiet: bool, PollInterval: float = POLL_INTERVAL_SECONDS) -> None:
+    def __init__(self, ApiKey: str, PollInterval: float = POLL_INTERVAL_SECONDS) -> None:
         try:
-            self.Quiet = Quiet
             self.PollInterval = PollInterval
             self.GenAi, self.Types, self.Errors = kGenAi.Load("batch_video_gen.py")
             self.Client: Any =self.GenAi.Client(api_key=ApiKey) if self.GenAi is not None else None
@@ -212,15 +217,12 @@ class kVideoGenerator:
                     source=self.Types.GenerateVideosSource(prompt=Job.Prompt, image=Image),
                     config=Config,
                 )
-                if not self.Quiet:
-                    print("  polling", end="", flush=True)
+                kConsole.Progress("  polling", End="")
                 while not Operation.done:
                     time.sleep(self.PollInterval)
                     Operation = self.Client.operations.get(Operation)
-                    if not self.Quiet:
-                        print(".", end="", flush=True)
-                if not self.Quiet:
-                    print()
+                    kConsole.Progress(".", End="")
+                kConsole.Progress()
                 if Operation.response is None or not Operation.response.generated_videos:
                     Reasons = getattr(Operation.response, "rai_media_filtered_reasons", None)
                     return None, f"no video returned (error={Operation.error}, filtered_reasons={Reasons})"
@@ -253,13 +255,12 @@ class kVideoGenerator:
         if kS.ErrorMode:
             return False
         try:
-            if not self.Quiet:
-                print(f"Generating {Job.OutPath} (model={Job.Model})...", flush=True)
+            kConsole.Progress(f"Generating {Job.OutPath} (model={Job.Model})...")
             Video, Refusal = self.Produce(Job)
             if kS.ErrorMode:
                 return False
             if Video is None:
-                sys.stderr.write(f"\nERROR: {Refusal}\n")  # errors always print, even in quiet mode
+                kConsole.Warn(f"\nERROR: {Refusal}")  # errors always print, even in quiet mode
                 return False
             Path(Job.OutPath).parent.mkdir(parents=True, exist_ok=True)
             Video.video.save(Job.OutPath)
@@ -267,8 +268,7 @@ class kVideoGenerator:
                 self.StripAudio(Job.OutPath)
                 if kS.ErrorMode:
                     return False
-            if not self.Quiet:
-                print(f"  saved ({os.path.getsize(Job.OutPath) / 1024 / 1024:.1f} MB)")
+            kConsole.Progress(f"  saved ({os.path.getsize(Job.OutPath) / 1024 / 1024:.1f} MB)")
             return True
         except kToolException:
             raise
@@ -305,6 +305,7 @@ class kBatchVideoGenApp:
             Parser.add_argument("--quiet", action="store_true",
                                 help="Suppress per-job progress output. Errors still go to stderr.")
             Args: argparse.Namespace = Parser.parse_args()
+            kConsole.Quiet = Args.quiet
 
             if not Args.prompt and not Args.spec:
                 raise ToolInputException("Either --prompt + --out OR --spec required")
@@ -321,7 +322,7 @@ class kBatchVideoGenApp:
             if kS.ErrorMode:
                 return 1
 
-            Generator = kVideoGenerator(ApiKey, Args.quiet)
+            Generator = kVideoGenerator(ApiKey)
             Successes = 0
             for Job in Jobs:
                 if Generator.Generate(Job):
@@ -329,8 +330,7 @@ class kBatchVideoGenApp:
             if kS.ErrorMode:
                 return 1
 
-            if not Args.quiet:
-                print(f"\n{Successes}/{len(Jobs)} videos generated.")
+            kConsole.Progress(f"\n{Successes}/{len(Jobs)} videos generated.")
             return 0 if Successes == len(Jobs) else 1
         except kToolException:
             raise

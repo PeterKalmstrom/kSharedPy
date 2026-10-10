@@ -33,6 +33,9 @@ Flags:
                        Default: 80.
     --no-polish        Skip the LLM polish pass and emit verbatim transcript.
     --polish-model M   Gemini model for polish. Default: gemini-2.5-flash.
+    --quiet            No progress lines on stderr (warnings - e.g. polish skipped - still show).
+
+Output: the subtitle file only - stdout stays empty; progress and warnings go to stderr.
 """
 # /// script
 # requires-python = ">=3.10"
@@ -41,10 +44,10 @@ Flags:
 
 import argparse
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
+from kConsole import kConsole
 from kFfmpeg import kDependency
 from kGenAi import kGenAi
 from _vedit_data import kVeditData
@@ -151,24 +154,18 @@ class kCuePolisher:
             if not Cues:
                 return Cues
             if not kGenAi.HasKey():
-                sys.stderr.write(
-                    "[vedit/subtitles] WARNING: GEMINI_API_KEY not set; skipping polish "
-                    "(raw transcript will be used). Pass --no-polish to suppress this warning.\n"
-                )
+                kConsole.Warn("[vedit/subtitles] WARNING: GEMINI_API_KEY not set; skipping polish "
+                              "(raw transcript will be used). Pass --no-polish to suppress this warning.")
                 return Cues
             if not kDependency.Has("google.genai"):
-                sys.stderr.write(
-                    "[vedit/subtitles] WARNING: google-genai not installed; skipping polish.\n"
-                    "  Run with: uv run subtitles.py ... (the script declares google-genai)\n"
-                )
+                kConsole.Warn("[vedit/subtitles] WARNING: google-genai not installed; skipping polish.\n"
+                              "  Run with: uv run subtitles.py ... (the script declares google-genai)")
                 return Cues
             genai, types, _Errors = kGenAi.Load("subtitles.py")
             Numbered = "\n".join(f"[{Index+1}] {Cue['text']}" for Index, Cue in enumerate(Cues))
             Prompt = POLISH_PROMPT.format(cues=Numbered)
-            sys.stderr.write(
-                f"[vedit/subtitles] polishing {len(Cues)} cues via {Model} "
-                f"({len(Numbered):,} chars)…\n"
-            )
+            kConsole.Progress(f"[vedit/subtitles] polishing {len(Cues)} cues via {Model} "
+                              f"({len(Numbered):,} chars)…")
             try:
                 Client = genai.Client()
                 Response = Client.models.generate_content(
@@ -177,9 +174,7 @@ class kCuePolisher:
                     config=types.GenerateContentConfig(temperature=0.2),
                 )
             except Exception as Failure:  # ERROR-SUPPRESSED-JUSTIFIED: polish is optional - the raw cues are a correct result and the warning says so
-                sys.stderr.write(
-                    f"[vedit/subtitles] WARNING: Gemini polish failed ({Failure}); using raw text.\n"
-                )
+                kConsole.Warn(f"[vedit/subtitles] WARNING: Gemini polish failed ({Failure}); using raw text.")
                 return Cues
             PolishedByIndex: dict[int, str] = {}
             for Line in (Response.text or "").splitlines():
@@ -197,10 +192,8 @@ class kCuePolisher:
                     Missing += 1
                     Out.append(Cue)
             if Missing:
-                sys.stderr.write(
-                    f"[vedit/subtitles] WARNING: {Missing}/{len(Cues)} cues missing from "
-                    f"polish response; left raw.\n"
-                )
+                kConsole.Warn(f"[vedit/subtitles] WARNING: {Missing}/{len(Cues)} cues missing from "
+                              f"polish response; left raw.")
             return Out
         except kToolException:
             raise
@@ -316,7 +309,9 @@ class kSubtitlesApp:
             Parser.add_argument("--no-polish", action="store_true",
                                 help="Skip the LLM polish pass (default: polish on).")
             Parser.add_argument("--polish-model", default="gemini-2.5-flash")
+            Parser.add_argument("--quiet", action="store_true")
             Args = Parser.parse_args()
+            kConsole.Quiet = Args.quiet
 
             TranscriptPath = Path(Args.transcript)
             if not TranscriptPath.exists():
@@ -350,8 +345,8 @@ class kSubtitlesApp:
                 return 1
             OutPath.parent.mkdir(parents=True, exist_ok=True)
             OutPath.write_text(Text, encoding="utf-8")
-            sys.stderr.write(f"[vedit/subtitles] wrote {len(Segments)} cues "
-                             f"({'cut-timeline' if Args.edl else 'source-timeline'}) → {OutPath}\n")
+            kConsole.Progress(f"[vedit/subtitles] wrote {len(Segments)} cues "
+                              f"({'cut-timeline' if Args.edl else 'source-timeline'}) → {OutPath}")
             return 0
         except kToolException:
             raise
