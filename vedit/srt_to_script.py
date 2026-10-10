@@ -5,9 +5,9 @@ re-recording: the speaker reads back from the cleaned-up script and the
 producer matches the new audio to the existing edit timeline (or just makes
 a fresh recording from it).
 
-Run via uvx (stdlib only):
+Run with uv or plain python (stdlib only):
 
-    uvx python srt_to_script.py --in edited.srt --out script.txt
+    uv run srt_to_script.py --in edited.srt --out script.txt
 
 Flags:
     --in PATH           Input .srt file. Required.
@@ -17,6 +17,10 @@ Flags:
     --width N           Wrap output text at N characters. Default: 80. Set 0
                          to disable wrapping.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 import argparse
 import re
 import sys

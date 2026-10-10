@@ -21,8 +21,11 @@ Usage:
       {"prompt": "...", "out": "C:\\\\videos\\\\reveal.mp4", "model": "veo-3.1-fast-generate-preview"}
     ]
 
-Run via uvx (the google-genai SDK is installed on demand):
-    GEMINI_API_KEY="..." uvx --with google-genai python batch_video_gen.py [args]
+Run with uv (the script header declares google-genai; uv installs it on demand):
+    GEMINI_API_KEY="..." uv run batch_video_gen.py [args]
+    --mute needs ffmpeg on PATH, or add the optional static-ffmpeg package:
+    GEMINI_API_KEY="..." uv run --with static-ffmpeg batch_video_gen.py --mute [args]
+    (an older uv without inline-metadata support: uvx --with google-genai python batch_video_gen.py [args])
 
 Environment:
     GEMINI_API_KEY - required. Get from https://aistudio.google.com/apikey
@@ -71,6 +74,10 @@ Transient errors - retry once before doing anything else:
       script reports a "Name or service not known" / "getaddrinfo failed" /
       DNS-style error, just re-run. A second attempt almost always succeeds.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["google-genai"]
+# ///
 
 import argparse
 import os

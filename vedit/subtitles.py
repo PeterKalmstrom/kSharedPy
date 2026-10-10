@@ -10,15 +10,17 @@ faithful to the audio, by design — viewers reading subtitles want clean
 sentences, not a literal transcript. Disable with --no-polish if you need
 a verbatim transcript-style .srt.
 
-Run via uvx:
+Run with uv (the script header declares google-genai for the default polish):
 
     # Polished subtitles (default; needs GEMINI_API_KEY)
-    uvx --with google-genai python subtitles.py \\
+    uv run subtitles.py \\
         --transcript transcript.json --edl edl.json --out edited.srt
 
     # Raw verbatim transcript (no LLM call)
-    uvx python subtitles.py --no-polish \\
+    uv run subtitles.py --no-polish \\
         --transcript transcript.json --edl edl.json --out edited.srt
+
+    (without inline-metadata support: uvx --with google-genai python subtitles.py ...)
 
 Flags:
     --transcript PATH  Transcript JSON (output of transcribe.py). Required.
@@ -32,6 +34,10 @@ Flags:
     --no-polish        Skip the LLM polish pass and emit verbatim transcript.
     --polish-model M   Gemini model for polish. Default: gemini-2.5-flash.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["google-genai"]
+# ///
 
 import argparse
 import re
@@ -151,7 +157,7 @@ class kCuePolisher:
             if not kDependency.Has("google.genai"):
                 sys.stderr.write(
                     "[vedit/subtitles] WARNING: google-genai not installed; skipping polish.\n"
-                    "  Run with: uvx --with google-genai python subtitles.py ...\n"
+                    "  Run with: uv run subtitles.py ... (the script declares google-genai)\n"
                 )
                 return Cues
             genai, types, _Errors = kGenAi.Load("subtitles.py")

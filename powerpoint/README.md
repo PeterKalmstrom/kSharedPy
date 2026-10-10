@@ -19,7 +19,9 @@ skills, but stand alone for use in pipelines, CI, or one-off analysis.
 
 - Windows
 - Microsoft PowerPoint installed
-- `pywin32` (installed on demand via `uvx --with pywin32`)
+- `pywin32` (installed on demand by `uv run <script>.py` - each COM script declares it in its PEP 723
+  header; `contact_sheet.py` also declares `pillow`). Without inline-metadata support:
+  `uvx --with pywin32 python <script>.py`.
 
 ## Tools
 
@@ -31,16 +33,16 @@ faster than calling `slide_snapshot` for each slide individually.
 **Quick start:**
 ```bash
 # Active presentation, whole deck, pretty-printed to stdout
-uvx --with pywin32 python bulk_read.py --pretty
+uv run bulk_read.py --pretty
 
 # Specific file, slide range, write to file
-uvx --with pywin32 python bulk_read.py \
+uv run bulk_read.py \
   --file "C:\path\to\deck.pptx" \
   --start 10 --end 20 \
   --out dump.json --pretty
 
 # Skip speaker notes (text only)
-uvx --with pywin32 python bulk_read.py --no-notes
+uv run bulk_read.py --no-notes
 ```
 
 **Output format:**
@@ -93,16 +95,16 @@ body word count and minimum body font size, then classifies each slide as
 **Quick start:**
 ```bash
 # Audit the active presentation
-uvx --with pywin32 python audit_deck.py
+uv run audit_deck.py
 
 # Audit a specific file (read-only, no UI)
-uvx --with pywin32 python audit_deck.py --file "C:\path\to\deck.pptx"
+uv run audit_deck.py --file "C:\path\to\deck.pptx"
 
 # JSON output (machine-readable, for piping into other tools)
-uvx --with pywin32 python audit_deck.py --json
+uv run audit_deck.py --json
 
 # Show skipped slides too (covers, votes, opponent slides)
-uvx --with pywin32 python audit_deck.py --all
+uv run audit_deck.py --all
 ```
 
 **Output format (table mode):**
@@ -148,5 +150,5 @@ already-open presentation by name and skip the failing `Open` call.
 # In an MCP session
 manage_presentation(action="open", file_path="C:\\path\\to\\deck.pptx")
 # Then
-uvx --with pywin32 python audit_deck.py --file "C:\\path\\to\\deck.pptx"
+uv run audit_deck.py --file "C:\\path\\to\\deck.pptx"
 ```

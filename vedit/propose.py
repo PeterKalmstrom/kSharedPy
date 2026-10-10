@@ -7,10 +7,14 @@ Three detectors, all optional via flags:
      — used to catch shorter pauses where the screen also isn't changing.
   3. Retake/false-start finder (Gemini text-only on the transcript).
 
-Run via uvx:
+Run with uv (the script header declares google-genai and static-ffmpeg):
 
-    uvx --with google-genai --with static-ffmpeg python propose.py \
+    uv run propose.py \
         --in "F:\\path\\input.mp4" --transcript transcript.json --out edl.json
+
+    Optional --vad-engine silero needs silero-vad (pulls torch), added per run:
+    uv run --with silero-vad propose.py --vad-engine silero ...
+    (without inline-metadata support: uvx --with google-genai --with static-ffmpeg python propose.py ...)
 
 Flags:
     --in PATH               Input video. Required.
@@ -40,7 +44,7 @@ Flags:
                             transcript: derive silence from Whisper transcript
                             (speech = where there are transcribed words). Avoids
                             dB-threshold calibration entirely; requires --transcript.
-                            silero: NN-based VAD, requires --with silero-vad.
+                            silero: NN-based VAD, requires `uv run --with silero-vad`.
     --no-llm                Disable Gemini retake finder.
     --llm-model NAME        Gemini model. Default: gemini-2.5-flash.
     --validate-retakes      For each LLM-flagged retake, extract the screen
@@ -100,6 +104,10 @@ Flags:
                             silence gap. Default: 0.4.
     --quiet                 Less verbose output.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["google-genai", "static-ffmpeg"]
+# ///
 
 import argparse
 import json
@@ -217,7 +225,7 @@ class kSilenceDetector:
 
         Speech timestamps are inverted to silence ranges, including any leading
         silence before the first speech and trailing silence after the last.
-        Requires `silero-vad` on the uvx --with list (pulls torch).
+        Requires the optional `silero-vad` package (pulls torch): `uv run --with silero-vad propose.py`.
         """
         if kS.ErrorMode:
             return []
@@ -225,8 +233,7 @@ class kSilenceDetector:
             if not kDependency.Has("silero_vad"):
                 raise ToolInputException(
                     "silero-vad not installed.\n"
-                    "Run via: uvx --with silero-vad --with google-genai --with static-ffmpeg "
-                    "python propose.py --vad-engine silero ...")
+                    "Run with: uv run --with silero-vad propose.py --vad-engine silero ...")
             from silero_vad import get_speech_timestamps, load_silero_vad, read_audio  # optional, checked above
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as File:
                 WavPath = File.name

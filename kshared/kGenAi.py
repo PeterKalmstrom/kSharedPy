@@ -1,7 +1,8 @@
 """The google-genai SDK (Gemini, Veo), loaded on demand.
 
 MASTER: kSharedPy/kshared/kGenAi.py - products and kSharedPy's own folders receive generated copies (kpy).
-A missing package is an expected state: ToolReportableException with the uvx install hint.
+A missing package is an expected state: ToolReportableException with the install hint - `uv run <script>`,
+because every script that loads this module declares google-genai in its PEP 723 header.
 
     GenAi, Types, Errors = kGenAi.Load("batch_image_gen.py")
     ApiKey = kGenAi.RequireKey()                     # exit 2 when neither GEMINI_API_KEY nor GOOGLE_API_KEY is set
@@ -14,7 +15,8 @@ from kShared import ToolInputException, ToolReportableException, kS, kToolExcept
 
 KEY_VARIABLES = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]  # google-genai reads either; GEMINI_API_KEY wins here
 MISSING_KEY = "GEMINI_API_KEY environment variable required (get one from https://aistudio.google.com/apikey)"
-INSTALL_HINT = "google-genai not installed. Run with:\n  uvx --with google-genai python {Script} [args]"
+INSTALL_HINT = ("google-genai not installed. Run with:\n  uv run {Script} [args]   (the script declares google-genai)\n"
+                "  or: uvx --with google-genai python {Script} [args]")
 
 
 class kGenAi:

@@ -14,11 +14,16 @@ Usage:
     # Only text (no notes)
     python bulk_read.py --no-notes
 
-Run via uvx if pywin32 is not installed system-wide:
-    uvx --with pywin32 python bulk_read.py [args]
+Run with uv if pywin32 is not installed system-wide (the script header declares it):
+    uv run bulk_read.py [args]
+    (without inline-metadata support: uvx --with pywin32 python bulk_read.py [args])
 
 A deck that is not open in PowerPoint is opened read-only without a window and closed again afterwards.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["pywin32; sys_platform == 'win32'"]
+# ///
 
 import argparse
 import json

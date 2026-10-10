@@ -183,7 +183,7 @@ class kPptLocator:
         try:
             if importlib.util.find_spec("win32com") is None or importlib.util.find_spec("pythoncom") is None:
                 raise ToolReportableException(
-                    f"pywin32 not installed. Run with:\n  uvx --with pywin32 python {Script} [args]")
+                    f"pywin32 not installed. Run with:\n  uv run {Script} [args]   (the script declares pywin32)")
             return None
         except kToolException:
             raise

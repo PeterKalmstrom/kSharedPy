@@ -11,13 +11,13 @@ Two modes:
    rejection of one cut class (e.g. when you don't trust LLM retakes for a
    particular recording).
 
-Run via uvx (no extra deps — only stdlib + the EDL/transcript JSONs):
+Run with uv or plain python (no extra deps — only stdlib + the EDL/transcript JSONs):
 
     # Review
-    uvx python review.py --edl edl.json --transcript transcript.json --out review.md
+    uv run review.py --edl edl.json --transcript transcript.json --out review.md
 
     # Restore: write a cleaned EDL with all retake cuts un-cut
-    uvx python review.py --edl edl.json --restore retake --out edl.cleaned.json
+    uv run review.py --edl edl.json --restore retake --out edl.cleaned.json
 
 Flags:
     --edl PATH         EDL JSON path. Required.
@@ -32,6 +32,10 @@ Flags:
                        cut. Default: 3.0.
     --max-line LEN     Wrap transcript lines longer than this. Default: 100.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 import argparse
 import json
 import sys

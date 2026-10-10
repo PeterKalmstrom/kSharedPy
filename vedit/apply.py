@@ -7,10 +7,12 @@ Default mode re-encodes for precise cuts at arbitrary timestamps. Use
 `--copy` for stream-copy (fast, but cuts snap to keyframe boundaries — only
 safe if segment boundaries already align with keyframes).
 
-Run via uvx:
+Run with uv (the script header declares static-ffmpeg):
 
-    uvx --with static-ffmpeg python apply.py \
+    uv run apply.py \
         --in "F:\\path\\input.mp4" --edl edl.json --out edited.mp4
+
+    (without inline-metadata support: uvx --with static-ffmpeg python apply.py ...)
 
 Flags:
     --in PATH           Input video. Required.
@@ -36,6 +38,10 @@ Flags:
                         cannot decode — yuv420p is the safe default.
     --quiet             Less verbose output.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["static-ffmpeg"]
+# ///
 
 import argparse
 import subprocess

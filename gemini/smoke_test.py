@@ -6,13 +6,19 @@ plausible size. Use to verify the Gemini API key, network path, and
 batch_image_gen.py import all work end-to-end.
 
 Usage:
-    GEMINI_API_KEY="..." uvx --with google-genai python smoke_test.py
+    GEMINI_API_KEY="..." uv run smoke_test.py
+    (the header declares google-genai; without inline-metadata support:
+     uvx --with google-genai python smoke_test.py)
 
 Exits 0 on success, 1 on any failure with a "FAIL: ..." diagnostic message
 (4 if an unexpected error was reported and its report waits for the user's yes).
 The test image is written to a temporary folder under kSharedPy/_scratch/ (inside
 the workspace, never the user profile) and removed afterwards.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["google-genai"]
+# ///
 
 import argparse
 import os

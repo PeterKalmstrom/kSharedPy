@@ -3,7 +3,13 @@ PowerPoint session; save in PowerPoint first, because this copies what is on dis
 
     python backup_snapshot.py --file deck.pptx --label pre-bulk-fontbump
     -> deck.20261007-143000.pre-bulk-fontbump.pptx (beside the deck)
+
+Standard library only: plain `python` or `uv run backup_snapshot.py ...`.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 import argparse
 import datetime
 import pathlib

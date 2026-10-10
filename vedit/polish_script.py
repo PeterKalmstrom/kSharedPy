@@ -3,10 +3,12 @@ preserving meaning. Designed to make re-recording from an edited transcript
 practical — natural speech contains restarts, filler, and grammar artifacts
 that don't read aloud well.
 
-Run via uvx (needs Gemini key):
+Run with uv (needs Gemini key; the script header declares google-genai):
 
-    uvx --with google-genai python polish_script.py \\
+    uv run polish_script.py \\
         --in script.txt --out script.polished.txt
+
+    (without inline-metadata support: uvx --with google-genai python polish_script.py ...)
 
 Flags:
     --in PATH        Input text file. Required.
@@ -21,6 +23,10 @@ verbal restarts, filler ("you know", "actually"), redundant phrasing, and
 fixes mid-thought grammar slips — but should not add content, change meaning,
 or formalize the voice.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["google-genai"]
+# ///
 
 import argparse
 import sys

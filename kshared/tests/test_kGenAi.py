@@ -72,7 +72,7 @@ class kGenAiLoadTests(unittest.TestCase):
             with self.assertRaises(ToolReportableException) as Caught:
                 kGenAi.Load("batch_image_gen.py")
         self.assertEqual(Caught.exception.ExitCode, 1)
-        self.assertIn("uvx --with google-genai python batch_image_gen.py", str(Caught.exception))
+        self.assertIn("uv run batch_image_gen.py", str(Caught.exception))
         self.assertFalse(kS.ErrorMode)
 
 

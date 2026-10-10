@@ -4,10 +4,12 @@ Outputs a JSON transcript with segment-level and word-level timestamps,
 plus per-segment confidence/no-speech-probability fields used by propose.py
 to detect retakes and low-quality stretches.
 
-Run via uvx (no venv required):
+Run with uv (no venv required; the script header declares faster-whisper and static-ffmpeg):
 
-    uvx --with faster-whisper --with static-ffmpeg python transcribe.py \
+    uv run transcribe.py \
         --in "F:\\path\\input.mp4" --out transcript.json
+
+    (without inline-metadata support: uvx --with faster-whisper --with static-ffmpeg python transcribe.py ...)
 
 Flags:
     --in PATH        Input media file (video or audio). Required.
@@ -22,6 +24,10 @@ Flags:
 
 First run downloads the model (~470MB for medium.en) to the HF cache.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["faster-whisper", "static-ffmpeg"]
+# ///
 import argparse
 import sys
 import time
@@ -160,7 +166,7 @@ class kTranscribeApp:
             if not kDependency.Has("faster_whisper"):
                 raise ToolInputException(
                     "faster-whisper not installed.\n"
-                    "Run via: uvx --with faster-whisper --with static-ffmpeg python transcribe.py ...")
+                    "Run with: uv run transcribe.py ... (the script declares faster-whisper and static-ffmpeg)")
             Transcriber = kTranscriber(Input, Args.model, Args.language, Args.device, Args.compute_type,
                                        Args.quiet)
             Payload = Transcriber.Transcribe()

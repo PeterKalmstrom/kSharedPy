@@ -19,6 +19,10 @@ check_kpattern. The header names the master release (the VERSION file).
 --shared-root (or KPY_SHARED_ROOT) overrides the manifest's SharedRoot, for a clone of the public master repo.
 Exit codes: 0 ok; 1 an unexpected error (reported); 2 bad input; 5 verify found a stale, edited or missing output.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 import argparse
 import ast
 import hashlib

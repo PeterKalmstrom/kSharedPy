@@ -1,6 +1,8 @@
 # kSharedPy
 
-Shared Python utilities for any project. Run via `uvx` so no global pip install is required.
+Shared Python utilities for any project. Run with `uv run <script>.py` so no global pip install is required:
+every runnable script declares its own dependencies in a PEP 723 header (`# /// script`), and `uv run`
+installs them on demand.
 
 ## Folders
 
@@ -18,7 +20,11 @@ Shared Python utilities for any project. Run via `uvx` so no global pip install 
 
 ## Conventions
 
-- Every script is runnable as `uvx --with <deps> python <script.py>` — no virtual env required
+- Every script is runnable as `uv run <script.py>` — no virtual env required. Its PEP 723 header
+  (`# /// script` ... `# ///`, right after the docstring) is the one place its dependencies are listed;
+  `kpy\tests\test_dependencies.py` checks the header against the script's real imports. Optional extras are
+  added per run (`uv run --with silero-vad propose.py ...`), as each docstring says.
+- A uv without inline-metadata support still works with `uvx --with <deps> python <script.py>` (deps from the header)
 - API keys via environment variables (e.g., `GEMINI_API_KEY`)
 - Inputs via CLI flags or JSON spec files
 - UTF-8 stdout forced (Windows safe)
@@ -29,7 +35,7 @@ Shared Python utilities for any project. Run via `uvx` so no global pip install 
 
 When you want to call one of these helpers from your own project script
 (e.g., a slide builder that needs to generate a backdrop image first), use
-`subprocess` to invoke the helper through `uvx`. This avoids the need for
+`subprocess` to invoke the helper through `uv run`. This avoids the need for
 your project to depend on `google-genai`, `pywin32`, etc. directly.
 
 **Single-shot pattern** (one image / one video):
@@ -42,7 +48,7 @@ OUT = r"C:\path\to\backdrop.png"
 PROMPT = "Cinematic dramatic photograph of ... no text, no logos."
 
 sys.exit(subprocess.run([
-    "uvx", "--with", "google-genai", "python", HELPER,
+    "uv", "run", HELPER,
     "--prompt", PROMPT, "--out", OUT, "--aspect", "16:9",
 ]).returncode)
 ```
@@ -64,7 +70,7 @@ with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="ut
 
 try:
     rc = subprocess.run([
-        "uvx", "--with", "google-genai", "python", HELPER,
+        "uv", "run", HELPER,
         "--spec", spec_path, "--quiet",
     ]).returncode
 finally:
@@ -74,7 +80,7 @@ sys.exit(rc)
 
 **Why subprocess (not import):** the helpers depend on `google-genai` /
 `pywin32`, which most consumer projects do not want to add as a hard
-dependency. `uvx` provisions them per-call and tears down. Subprocess also
+dependency. `uv run` reads the helper's header and provisions them per call. Subprocess also
 keeps API failures (network errors, quota) from crashing your build script.
 
 The same pattern works for `kSharedPy/veo/batch_video_gen.py`.

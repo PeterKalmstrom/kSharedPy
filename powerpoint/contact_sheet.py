@@ -1,12 +1,18 @@
 """Every slide as a thumbnail grid in one PNG - shows colour drift, density imbalance,
 monotone-anchor stretches and forgotten template slides that per-slide review misses.
 
-    uvx --with pywin32 --with pillow python contact_sheet.py --file deck.pptx [--cols 6] [--slide-width 240]
+    uv run contact_sheet.py --file deck.pptx [--cols 6] [--slide-width 240]
     -> <deck>_contact.png beside the deck (renders through PowerPoint: Windows)
-    python contact_sheet.py --renders renders/ [--out sheet.png]      (any OS)
+    uv run contact_sheet.py --renders renders/ [--out sheet.png]      (any OS)
     -> a sheet from PNG/JPEG renders already on disk (render_lo.py, render_slides.py); render_lo.py --sheet
        does both steps at once
+The header declares pillow and (on Windows) pywin32; without inline-metadata support:
+`uvx --with pillow --with pywin32 python contact_sheet.py ...`.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["pillow", "pywin32; sys_platform == 'win32'"]
+# ///
 import argparse
 import glob
 import os

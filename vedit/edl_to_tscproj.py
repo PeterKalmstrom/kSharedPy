@@ -14,7 +14,7 @@ expressing cuts as a Camtasia timeline edit instead.
 Usage (give it a FRESH .tscproj — before any manual edits — OR Kate's edited
 version; either works because the script replaces all existing source clips):
 
-    uvx python X:\\Source\\Admin\\kSharedPy\\vedit\\edl_to_tscproj.py \\
+    uv run X:\\Source\\Admin\\kSharedPy\\vedit\\edl_to_tscproj.py \\
         --edl edl.json \\
         --tscproj "path/to/Project.tscproj" \\
         --out "path/to/Project.edited.tscproj"
@@ -33,7 +33,13 @@ Flags:
     --src NAME      Filter: only patch tracks whose source bin entry matches this
                     filename substring.  Default: first .trec entry found.
     --quiet         Suppress progress output.
+
+Standard library only (plain `python edl_to_tscproj.py ...` works too).
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 
 import argparse
 import copy

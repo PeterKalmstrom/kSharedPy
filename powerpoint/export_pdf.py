@@ -1,8 +1,9 @@
 """PDF export via ExportAsFixedFormat: speaker handout (slide + notes per page), audience
 handout (N-up), or plain slides.
 
-    uvx --with pywin32 python export_pdf.py --file deck.pptx --mode notes
-    uvx --with pywin32 python export_pdf.py --file deck.pptx --mode handout --slides-per-page 6
+    uv run export_pdf.py --file deck.pptx --mode notes
+    uv run export_pdf.py --file deck.pptx --mode handout --slides-per-page 6
+    (the header declares pywin32; without inline-metadata support: uvx --with pywin32 python export_pdf.py ...)
 
 pywin32 trap (runtime-confirmed 2026-10-07): calling ExportAsFixedFormat positionally lets pywin32
 fill the optional PrintRange argument itself, and PowerPoint rejects it with "TypeError: The Python
@@ -10,6 +11,10 @@ instance can not be converted to a COM object". Pass a real PrintRange object fr
 PrintOptions.Ranges and name every argument. If that still fails, slides mode falls back to
 SaveCopyAs(path, 32) (ppSaveAsPDF); notes and handout modes have no such fallback.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["pywin32; sys_platform == 'win32'"]
+# ///
 import argparse
 import os
 import sys

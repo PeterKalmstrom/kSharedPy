@@ -13,14 +13,18 @@ until the video is ready (typically ~60 s), downloads it, and saves to disk.
 **Quick start:**
 ```bash
 # Single video, inline
-GEMINI_API_KEY="..." uvx --with google-genai python batch_video_gen.py \
+GEMINI_API_KEY="..." uv run batch_video_gen.py \
     --prompt "Cinematic side view of a leaf falling onto still water" \
     --out C:\path\to\leaf.mp4
 
 # Batch from JSON spec
-GEMINI_API_KEY="..." uvx --with google-genai python batch_video_gen.py \
+GEMINI_API_KEY="..." uv run batch_video_gen.py \
     --spec videos.json
 ```
+
+The script declares `google-genai` in its PEP 723 header, so `uv run` installs it. `static-ffmpeg` is
+optional (only `--mute` needs ffmpeg): `uv run --with static-ffmpeg batch_video_gen.py --mute ...`.
+Without inline-metadata support: `uvx --with google-genai python batch_video_gen.py ...`.
 
 **Spec file format:**
 ```json
@@ -40,7 +44,7 @@ GEMINI_API_KEY="..." uvx --with google-genai python batch_video_gen.py \
 | `--resolution` | API default (720p) | `720p` or `1080p` |
 | `--negative-prompt TEXT` | — | Things to keep out of the video |
 | `--image PATH` | — | Starting-frame image (image-to-video) |
-| `--mute` | off | Strip the audio track (needs ffmpeg on PATH, or `uvx --with static-ffmpeg`) |
+| `--mute` | off | Strip the audio track (needs ffmpeg on PATH, or `uv run --with static-ffmpeg`) |
 | `--quiet` | off | No progress output; errors still go to stderr |
 
 **Exit codes:** 0 all saved; 1 a job was refused by the API (others still ran),

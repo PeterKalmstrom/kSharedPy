@@ -21,8 +21,9 @@ Usage:
       {"prompt": "...", "out": "C:\\\\images\\\\eq-faults.png", "aspect_ratio": "16:9"}
     ]
 
-Run via uvx (the google-genai SDK is installed on demand):
-    GEMINI_API_KEY="..." uvx --with google-genai python batch_image_gen.py [args]
+Run with uv (the script header declares google-genai; uv installs it on demand):
+    GEMINI_API_KEY="..." uv run batch_image_gen.py [args]
+    (an older uv without inline-metadata support: uvx --with google-genai python batch_image_gen.py [args])
 
 Environment:
     GEMINI_API_KEY - required. Get from https://aistudio.google.com/apikey
@@ -60,6 +61,10 @@ Notes:
       if you need to know the format downstream. The companion `smoke_test.py`
       accepts both PNG and JPEG headers.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["google-genai"]
+# ///
 
 import argparse
 import os

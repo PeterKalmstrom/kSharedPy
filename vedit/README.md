@@ -72,53 +72,50 @@ To hand-edit: flip `keep` between true/false, or split a segment into two by ins
 
 ```powershell
 # 0. Audio gate — MANDATORY. Stops everything if audio doesn't match the profile.
-uvx --with static-ffmpeg python X:\Source\Admin\kSharedPy\vedit\audio_check.py `
+uv run X:\Source\Admin\kSharedPy\vedit\audio_check.py `
   --in "F:\path\input.trec" `
   --profile F:\Dropbox\Source\Recording\.audio_profile.json
 # exit 1 = fail → STOP. Re-record with the correct mic.
 
 # 1. Transcribe (CPU ~3x realtime with small.en)
-uvx --with faster-whisper --with static-ffmpeg python `
-  X:\Source\Admin\kSharedPy\vedit\transcribe.py `
+uv run X:\Source\Admin\kSharedPy\vedit\transcribe.py `
   --in "F:\path\input.trec" --out transcript.json
 
 # 2. Propose cuts — validated config (82% precision / 87% recall vs a hand edit)
-uvx --with google-genai --with static-ffmpeg python `
-  X:\Source\Admin\kSharedPy\vedit\propose.py `
+uv run X:\Source\Admin\kSharedPy\vedit\propose.py `
   --in "F:\path\input.trec" --transcript transcript.json --out edl.json `
   --vad-engine transcript --validate-retakes --trim-filler
 
 # 2.5. Review proposed cuts (markdown, read-only)
-uvx python X:\Source\Admin\kSharedPy\vedit\review.py `
+uv run X:\Source\Admin\kSharedPy\vedit\review.py `
   --edl edl.json --transcript transcript.json --only retake --out review.md
 # Open review.md; if a cut looks wrong, edit edl.json to flip "keep": false → true.
 
 # 3a. Apply (ffmpeg path — plain .mp4, cursor NOT preserved)
-uvx --with static-ffmpeg python `
-  X:\Source\Admin\kSharedPy\vedit\apply.py `
+uv run X:\Source\Admin\kSharedPy\vedit\apply.py `
   --in "F:\path\input.trec" --edl edl.json --out edited.mp4
 
 # 3b. Apply (Camtasia path — cursor, zoom-and-pan, annotations preserved)
 #     Use a FRESH .tscproj (before any manual Camtasia edits). Then open the
 #     output in Camtasia and export from there.
-uvx python X:\Source\Admin\kSharedPy\vedit\edl_to_tscproj.py `
+uv run X:\Source\Admin\kSharedPy\vedit\edl_to_tscproj.py `
   --edl edl.json `
   --tscproj "F:\path\Project.tscproj" `
   --out "F:\path\Project.edited.tscproj"
 
 # 4. (Optional) Subtitles
-uvx --with google-genai python X:\Source\Admin\kSharedPy\vedit\subtitles.py `
+uv run X:\Source\Admin\kSharedPy\vedit\subtitles.py `
   --transcript transcript.json --edl edl.json --out edited.srt
 
 # 5. (Optional) Reading script for re-recording the audio
-uvx python X:\Source\Admin\kSharedPy\vedit\srt_to_script.py `
+uv run X:\Source\Admin\kSharedPy\vedit\srt_to_script.py `
   --in edited.srt --out script.txt --paragraphs
 ```
 
 ## One-time audio profile calibration
 
 ```powershell
-uvx --with static-ffmpeg python X:\Source\Admin\kSharedPy\vedit\audio_check.py `
+uv run X:\Source\Admin\kSharedPy\vedit\audio_check.py `
   --in good_known_recording.trec --calibrate `
   --profile-out F:\Dropbox\Source\Recording\.audio_profile.json
 ```
@@ -131,7 +128,11 @@ Five metrics are checked: `mean_volume_db`, `max_volume_db`, `integrated_lufs`, 
 
 ## Conventions
 
-- Run via `uvx --with <deps> python <script>.py` — no venv required. Each script's docstring lists the deps.
+- Run with `uv run <script>.py` — no venv required. Each script declares its dependencies in a PEP 723
+  header (`# /// script`): `transcribe.py` faster-whisper + static-ffmpeg, `propose.py` google-genai +
+  static-ffmpeg, `apply.py` / `audio_check.py` static-ffmpeg, `subtitles.py` / `polish_script.py`
+  google-genai, the rest none. Optional: `uv run --with silero-vad propose.py --vad-engine silero ...`.
+  Without inline-metadata support: `uvx --with <deps> python <script>.py`.
 - ffmpeg/ffprobe are bundled via the `static-ffmpeg` PyPI package — no system install needed. First run downloads ~80MB to the uv cache.
 - `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) must be set in the environment for any LLM step: `propose.py` (retake-finder, filler-trim, multimodal validate), `subtitles.py` (polish, by default), `polish_script.py` (always).
 - All scripts force UTF-8 stdout for Windows safety.

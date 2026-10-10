@@ -11,13 +11,16 @@ series. This script catches that BEFORE transcription so you don't burn
 
 **Calibrate** (build a baseline from a known-good recording):
 
-    uvx --with static-ffmpeg python audio_check.py \\
+    uv run audio_check.py \\
         --in good_recording.trec --calibrate --profile-out profile.json
 
 **Check** (compare a new recording against the baseline; non-zero exit on fail):
 
-    uvx --with static-ffmpeg python audio_check.py \\
+    uv run audio_check.py \\
         --in new_recording.trec --profile profile.json
+
+The script header declares static-ffmpeg, so `uv run` installs it (without inline-metadata
+support: `uvx --with static-ffmpeg python audio_check.py ...`).
 
 # Metrics
 
@@ -44,6 +47,10 @@ Flags:
     --tolerance-db F    Override default tolerance for all metrics. Default: 2.0.
     --quiet             Suppress per-metric pass/fail rows on success.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["static-ffmpeg"]
+# ///
 
 import argparse
 import json

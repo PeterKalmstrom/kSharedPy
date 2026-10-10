@@ -4,9 +4,14 @@ Use this, not Slide.Export: Slide.Export draws a FALLBACK
 font for embedded-but-not-installed fonts, which hides real mid-word line breaks.
 SaveCopyAs never rebinds the open presentation.
 
-    uvx --with pywin32 python render_slides.py --file deck.pptx --out renders/
+    uv run render_slides.py --file deck.pptx --out renders/
     -> renders/s001.jpg .. sNNN.jpg
+    (the header declares pywin32; without inline-metadata support: uvx --with pywin32 python render_slides.py ...)
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["pywin32; sys_platform == 'win32'"]
+# ///
 import argparse
 import os
 import shutil

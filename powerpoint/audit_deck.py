@@ -30,8 +30,9 @@ Usage:
     # JSON output (machine-readable)
     python audit_deck.py --json
 
-Run via uvx if pywin32 is not installed system-wide:
-    uvx --with pywin32 python audit_deck.py [args]
+Run with uv if pywin32 is not installed system-wide (the script header declares it):
+    uv run audit_deck.py [args]
+    (without inline-metadata support: uvx --with pywin32 python audit_deck.py [args])
 
 Path matching:
     --file accepts forward or backward slashes; both are normalized before
@@ -45,6 +46,10 @@ Path matching:
     file — e.g., a stale lock — open it manually in PowerPoint first, then
     re-run this script.)
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["pywin32; sys_platform == 'win32'"]
+# ///
 
 import argparse
 import json

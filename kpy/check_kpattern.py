@@ -18,6 +18,11 @@ Also banned anywhere: lambda, nested functions (use a named method). A function 
 "DOCUMENTED EXCEPTION: <why>" on its def line or the line above (pure helpers whose callers are all guarded).
 Exit 1 when anything is missing; each finding names file, line and function.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
+import argparse
 import ast
 import glob
 import os
@@ -27,7 +32,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FOLDERS = ["kshared", "kpy", "powerpoint", "gemini", "veo", "vedit"]  # kpy:setting Folders
 SHARED_FOLDER = "kshared"  # kpy:setting SharedFolder
 sys.path.insert(0, os.path.join(ROOT, SHARED_FOLDER))
-from kShared import kRun, kS, kToolException  # noqa: E402  (the shared folder is on the path only from here)
+from kShared import ToolInputException, kRun, kS, kToolException  # noqa: E402  (the shared folder is on the path only from here)
 
 INFRA = {"kS", "kRun", "kErrorDetail", "kErrorReport", "kToolException", "ToolInputException", "ToolReportableException"}
 
@@ -175,7 +180,12 @@ class kPatternAuditApp:
         if kS.ErrorMode:
             return 1
         try:
-            Files = sys.argv[1:]
+            Parser = argparse.ArgumentParser(description="Audit Python files for the kShared error pattern.")
+            Parser.add_argument("files", nargs="*", help="files to audit (default: every *.py in the audited folders)")
+            Files = Parser.parse_args().files
+            for Path in Files:
+                if not os.path.isfile(Path):
+                    raise ToolInputException(f"not found: {Path}")
             if not Files:
                 for Folder in FOLDERS:
                     Files += glob.glob(os.path.join(ROOT, *Folder.split("/"), "*.py"))

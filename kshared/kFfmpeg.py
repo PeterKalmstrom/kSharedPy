@@ -76,7 +76,8 @@ class kFfmpeg:
         try:
             if not kDependency.Has("static_ffmpeg"):
                 raise ToolInputException("static-ffmpeg not installed. "
-                                         "Run via: uvx --with static-ffmpeg python <script>.py ...")
+                                         "Run with: uv run <script>.py ... (a script that needs ffmpeg declares "
+                                         "static-ffmpeg), or: uv run --with static-ffmpeg <script>.py ...")
             kFfmpeg.AddStaticPaths()
             FfmpegPath = shutil.which("ffmpeg")
             FfprobePath = shutil.which("ffprobe")
