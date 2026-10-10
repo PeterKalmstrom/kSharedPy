@@ -339,6 +339,7 @@ class kS:
 
     ErrorMode = False
     Errors = []          # every report, in order; the first one is the cause
+    Lock = threading.RLock()  # threads report at once (batch jobs, threading.excepthook): one report at a time
     ErrorLogVariable = "KPY_ERROR_LOG"  # kpy:setting ErrorLogVariable
     LogPath = os.environ.get(ErrorLogVariable, "")
 
@@ -349,6 +350,12 @@ class kS:
         of the output, not an error, so it is not reported; it travels up to kRun.Main, which exits quietly."""
         if kS.IsPipeGone(Error):
             raise Error
+        with kS.Lock:
+            kS.Report(Error, Location, AdditionalMessage)
+
+    @staticmethod
+    def Report(Error, Location, AdditionalMessage):
+        """The body of GlobalErrorHandler, run under kS.Lock so the first error recorded is the real cause."""
         try:
             Halted = kS.ErrorMode
             Record = {"time": datetime.datetime.now().isoformat(timespec="seconds"), "location": Location,

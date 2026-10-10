@@ -143,7 +143,47 @@ class kPyCompilerTests(unittest.TestCase):
         self.WriteMaster("kshared/kMore.py", "Y = 2\n")
         self.assertEqual(self.Compiler("--action", "compile").returncode, 0)
         self.assertIn("Y = 2", self.Output())
-        self.assertIn("# Master: kSharedPy/kshared/kThing.py + kSharedPy/kshared/kMore.py", self.Output())
+        self.assertIn("# Master: kSharedPy unversioned: kshared/kThing.py + kshared/kMore.py", self.Output())
+
+    def test_gate_missing_import(self):
+        self.WriteMaster("kshared/kHelper.py", '"""A helper."""\n')
+        self.WriteMaster("kshared/kThing.py", MASTER_PART + "\n\nimport kHelper  # noqa\n")
+        Result = self.Compiler()
+        self.assertEqual(Result.returncode, 2)
+        self.assertIn("imports kHelper", Result.stderr)
+        self.WriteManifest({"Out": "scripts/kThing.py", "Parts": ["kshared/kThing.py"]},
+                           {"Out": "scripts/kHelper.py", "Parts": ["kshared/kHelper.py"]})
+        self.assertEqual(self.Compiler().returncode, 0)
+
+    def test_gate_import_paths(self):
+        self.WriteMaster("kshared/kHelper.py", '"""A helper."""\n')
+        self.WriteMaster("kshared/kThing.py", MASTER_PART + "\n\nimport kHelper  # noqa\n")
+        self.WriteManifest({"Out": "tools/kThing.py", "Parts": ["kshared/kThing.py"], "ImportPaths": ["scripts"]},
+                           {"Out": "scripts/kHelper.py", "Parts": ["kshared/kHelper.py"]})
+        self.assertEqual(self.Compiler().returncode, 0)
+
+    def test_gate_private_material(self):
+        self.WriteMaster("kshared/kThing.py", MASTER_PART + '    Where = "X:\\\\Source\\\\Secret"\n')
+        Result = self.Compiler()
+        self.assertEqual(Result.returncode, 2)
+        self.assertIn("private material", Result.stderr)
+
+    def test_gate_error_pattern(self):
+        self.WriteMaster("kshared/kThing.py", MASTER_PART + "\n    def Bad(self):\n        return 1\n")
+        Result = self.Compiler()
+        self.assertEqual(Result.returncode, 2)
+        self.assertIn("error pattern", Result.stderr)
+
+    def test_version_header_and_report(self):
+        self.WriteMaster("VERSION", "9.9.0\n")
+        Report = self.Compiler("--action", "report", "--root", self.Root)
+        self.assertEqual(Report.returncode, 5, Report.stderr)
+        self.assertIn("1 missing", Report.stdout)
+        self.Compiler("--action", "compile")
+        self.assertIn("# Master: kSharedPy 9.9.0: kshared/kThing.py", self.Output())
+        Report = self.Compiler("--action", "report", "--root", self.Root)
+        self.assertEqual(Report.returncode, 0, Report.stderr)
+        self.assertIn("compiled from kSharedPy 9.9.0", Report.stdout)
 
     def test_missing_master_says_how_to_fix(self):
         shutil.rmtree(self.Master)
