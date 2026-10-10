@@ -41,30 +41,16 @@ Path matching:
         --file "C:\\path\\to\\deck.pptx"
         --file "deck.pptx"            (basename match against open windows)
     If no open Presentation matches, the file is opened read-only without
-    a window. (If PowerPoint cannot Open() the file — e.g., a stale lock —
-    open it manually in PowerPoint first, then re-run this script.)
+    a window and closed again afterwards. (If PowerPoint cannot Open() the
+    file — e.g., a stale lock — open it manually in PowerPoint first, then
+    re-run this script.)
 """
 
 import argparse
-import io
 import json
-import sys
 
-# Ensure UTF-8 output on Windows
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
-
-try:
-    import win32com.client
-    import pythoncom
-except ImportError:
-    sys.stderr.write(
-        "pywin32 not installed. Run with:\n"
-        "  uvx --with pywin32 python audit_deck.py [args]\n"
-    )
-    sys.exit(1)
-
+from _ppt import kPptLocator, kPptSession
+from kShared import kRun, kS, kToolException
 
 # Default skip patterns (case-insensitive substring match against title)
 # Customize with --skip for non-default decks
@@ -82,186 +68,256 @@ DEFAULT_SKIP_NUMBERS = {1, 2, 3, 4, 5}
 # Body floor in points (slide medium)
 BODY_FLOOR = 18.0
 
+# Words that are separators, not content
+NON_WORDS = ("|", "—", "-", "·")
 
-def is_vote_or_template(slide):
-    """Detect voting / template slides by content cues."""
-    for sh in slide.Shapes:
+
+class kDeckAuditor:
+    """Word-budget and font-floor audit of one presentation."""
+
+    def __init__(self, SkipNumbers, SkipPatterns):
         try:
-            if not sh.HasTextFrame or not sh.TextFrame.HasText:
-                continue
-            t = sh.TextFrame.TextRange.Text or ""
-            t_lower = t.lower()
-            # Common voting-slide markers
-            if "rösta nu" in t_lower or "vote now" in t_lower:
-                return True
-            # "X — Hot eller hopp?" pattern
-            if "hot eller hopp" in t_lower:
-                return True
-        except pythoncom.com_error:
-            continue
-    return False
+            self.SkipNumbers = SkipNumbers
+            self.SkipPatterns = SkipPatterns
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kDeckAuditor.__init__")
 
-
-def slide_metrics(slide):
-    """Return (title, body_word_count, min_body_font_pt, body_sizes)."""
-    title = ""
-    body_words = 0
-    min_size = None
-    sizes = []
-
-    for sh in slide.Shapes:
+    @staticmethod
+    def ShapeText(Shape):
+        """The shape's text, or None when it has none or PowerPoint refuses to read it."""
+        if kS.ErrorMode:
+            return None
         try:
-            if not sh.HasTextFrame or not sh.TextFrame.HasText:
-                continue
-            t = (sh.TextFrame.TextRange.Text or "").strip()
-            if not t:
-                continue
+            import pythoncom
+
             try:
-                sz = float(sh.TextFrame.TextRange.Font.Size)
-            except Exception:
-                sz = None
+                if not Shape.HasTextFrame or not Shape.TextFrame.HasText:
+                    return None
+                return Shape.TextFrame.TextRange.Text or ""
+            except pythoncom.com_error:  # ERROR-SUPPRESSED-JUSTIFIED: some shapes throw on HasTextFrame/HasText - they carry no audit-relevant text
+                return None
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kDeckAuditor.ShapeText")
+            return None
 
-            # First text shape is treated as the title (don't count its words or size)
-            if not title:
-                title = t.replace("\r", " | ").replace("\n", " | ")[:60]
-                continue
-
-            words = len([w for w in t.split() if w not in ("|", "—", "-", "·")])
-            body_words += words
-            if sz:
-                sizes.append(sz)
-                if min_size is None or sz < min_size:
-                    min_size = sz
-        except pythoncom.com_error:
-            continue
-
-    return title, body_words, min_size or 0.0, sizes
-
-
-def status_for(slide_num, title, body_words, min_size,
-               skip_numbers, skip_patterns):
-    """Classify a slide's status."""
-    if slide_num in skip_numbers:
-        return "[skip]"
-
-    title_lower = (title or "").lower()
-    for pat in skip_patterns:
-        if pat.lower() in title_lower:
-            return f"[skip-{pat[:8]}]"
-
-    over_budget = body_words > 12
-    below_floor = 0 < min_size < BODY_FLOOR
-
-    if over_budget or below_floor:
-        return "** AUDIT"
-    if body_words > 8:
-        return "ok-tight"
-    return "OK"
-
-
-def audit(pres, skip_numbers, skip_patterns):
-    """Produce audit records for every slide."""
-    results = []
-    for i in range(1, pres.Slides.Count + 1):
-        s = pres.Slides(i)
-        title, body_words, min_size, sizes = slide_metrics(s)
-        # Voting / template slides — detect after metrics
-        if status_for(i, title, body_words, min_size,
-                      skip_numbers, skip_patterns) in ("[skip]",) or \
-           any(p.lower() in (title or "").lower() for p in skip_patterns):
-            status = status_for(i, title, body_words, min_size,
-                                skip_numbers, skip_patterns)
-        elif is_vote_or_template(s):
-            status = "[vote]"
-        else:
-            status = status_for(i, title, body_words, min_size,
-                                skip_numbers, skip_patterns)
-        results.append({
-            "slide": i,
-            "title": title,
-            "body_words": body_words,
-            "min_font_pt": round(min_size, 1),
-            "status": status,
-        })
-    return results
-
-
-def print_table(results, show_all=False):
-    """Print a tab-aligned report. Skipped slides hidden unless show_all."""
-    print(f"{'#':>3} {'words':>5} {'min_pt':>7}  {'status':<12} title")
-    print("-" * 100)
-    for r in results:
-        if not show_all and r["status"].startswith("[skip"):
-            continue
-        title = r["title"] or "(no title)"
-        print(f"{r['slide']:>3} {r['body_words']:>5} {r['min_font_pt']:>5.0f}pt"
-              f"   {r['status']:<12} {title[:65]}")
-
-    # Summary
-    total = len(results)
-    audit_n = sum(1 for r in results if r["status"] == "** AUDIT")
-    tight_n = sum(1 for r in results if r["status"] == "ok-tight")
-    ok_n = sum(1 for r in results if r["status"] == "OK")
-    skip_n = sum(1 for r in results if r["status"].startswith("[skip"))
-    vote_n = sum(1 for r in results if r["status"] == "[vote]")
-    print("-" * 100)
-    print(f"  {total} slides total: {audit_n} need audit, {tight_n} tight, "
-          f"{ok_n} ok, {vote_n} vote, {skip_n} skipped")
-
-
-def main():
-    p = argparse.ArgumentParser(
-        description="Audit a PowerPoint deck for word-budget and font-floor defects.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    p.add_argument("--file", help="Path to .pptx (default: active presentation)")
-    p.add_argument("--skip", default="",
-                   help="Comma-separated extra title-substrings to skip "
-                        "(beyond defaults like HOPP, HOT Svar)")
-    p.add_argument("--all", action="store_true",
-                   help="Include skipped slides in output")
-    p.add_argument("--json", action="store_true",
-                   help="Output JSON instead of table")
-    args = p.parse_args()
-
-    skip_patterns = list(DEFAULT_SKIP_PATTERNS)
-    if args.skip:
-        skip_patterns.extend(s.strip() for s in args.skip.split(",") if s.strip())
-
-    pythoncom.CoInitialize()
-    try:
+    @staticmethod
+    def FontSize(Shape):
+        """The shape's font size in points, or None when mixed or unreadable."""
+        if kS.ErrorMode:
+            return None
         try:
-            app = win32com.client.GetActiveObject("PowerPoint.Application")
-        except pythoncom.com_error:
-            app = win32com.client.Dispatch("PowerPoint.Application")
-            app.Visible = True
+            try:
+                return float(Shape.TextFrame.TextRange.Font.Size)
+            except Exception:  # ERROR-SUPPRESSED-JUSTIFIED: mixed sizes or no size - the shape just adds no size to the minimum
+                return None
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kDeckAuditor.FontSize")
+            return None
 
-        if args.file:
-            # Normalize path separators for substring matching
-            file_norm = args.file.replace("/", "\\").lower()
-            file_basename = file_norm.split("\\")[-1]
-            target = None
-            for pr in app.Presentations:
-                pr_full = pr.FullName.replace("/", "\\").lower()
-                if file_norm in pr_full or file_basename == pr.Name.lower():
-                    target = pr
-                    break
-            if target is None:
-                target = app.Presentations.Open(args.file, ReadOnly=True,
-                                                WithWindow=False)
-        else:
-            target = app.ActivePresentation
+    @staticmethod
+    def IsVoteOrTemplate(Slide):
+        """Detect voting / template slides by content cues."""
+        if kS.ErrorMode:
+            return False
+        try:
+            for Shape in Slide.Shapes:
+                Text = kDeckAuditor.ShapeText(Shape)
+                if Text is None:
+                    continue
+                TextLower = Text.lower()
+                # Common voting-slide markers
+                if "rösta nu" in TextLower or "vote now" in TextLower:
+                    return True
+                # "X — Hot eller hopp?" pattern
+                if "hot eller hopp" in TextLower:
+                    return True
+            return False
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kDeckAuditor.IsVoteOrTemplate")
+            return False
 
-        results = audit(target, DEFAULT_SKIP_NUMBERS, skip_patterns)
+    @staticmethod
+    def SlideMetrics(Slide):
+        """Return (Title, BodyWordCount, MinBodyFontPt, BodySizes)."""
+        if kS.ErrorMode:
+            return "", 0, 0.0, []
+        try:
+            Title = ""
+            BodyWords = 0
+            MinSize = None
+            Sizes = []
+            for Shape in Slide.Shapes:
+                Text = (kDeckAuditor.ShapeText(Shape) or "").strip()
+                if not Text:
+                    continue
+                Size = kDeckAuditor.FontSize(Shape)
+                # First text shape is treated as the title (don't count its words or size)
+                if not Title:
+                    Title = Text.replace("\r", " | ").replace("\n", " | ")[:60]
+                    continue
+                BodyWords += len([Word for Word in Text.split() if Word not in NON_WORDS])
+                if Size:
+                    Sizes.append(Size)
+                    if MinSize is None or Size < MinSize:
+                        MinSize = Size
+            return Title, BodyWords, MinSize or 0.0, Sizes
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kDeckAuditor.SlideMetrics")
+            return "", 0, 0.0, []
 
-        if args.json:
-            print(json.dumps(results, indent=2, ensure_ascii=False))
-        else:
-            print_table(results, show_all=args.all)
-    finally:
-        pythoncom.CoUninitialize()
+    def SkipPatternHit(self, Title):
+        """True when the title contains one of the skip patterns."""
+        if kS.ErrorMode:
+            return False
+        try:
+            TitleLower = (Title or "").lower()
+            for Pattern in self.SkipPatterns:
+                if Pattern.lower() in TitleLower:
+                    return True
+            return False
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kDeckAuditor.SkipPatternHit")
+            return False
+
+    def StatusFor(self, SlideNum, Title, BodyWords, MinSize):
+        """Classify a slide's status."""
+        if kS.ErrorMode:
+            return ""
+        try:
+            if SlideNum in self.SkipNumbers:
+                return "[skip]"
+            TitleLower = (Title or "").lower()
+            for Pattern in self.SkipPatterns:
+                if Pattern.lower() in TitleLower:
+                    return f"[skip-{Pattern[:8]}]"
+            OverBudget = BodyWords > 12
+            BelowFloor = 0 < MinSize < BODY_FLOOR
+            if OverBudget or BelowFloor:
+                return "** AUDIT"
+            if BodyWords > 8:
+                return "ok-tight"
+            return "OK"
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kDeckAuditor.StatusFor")
+            return ""
+
+    def Audit(self, Pres):
+        """Produce audit records for every slide."""
+        if kS.ErrorMode:
+            return []
+        try:
+            Results = []
+            for Index in range(1, Pres.Slides.Count + 1):
+                Slide = Pres.Slides(Index)
+                Title, BodyWords, MinSize, _Sizes = kDeckAuditor.SlideMetrics(Slide)
+                # Skipped slides keep their skip status; voting / template slides are detected after that
+                if Index in self.SkipNumbers or self.SkipPatternHit(Title):
+                    Status = self.StatusFor(Index, Title, BodyWords, MinSize)
+                elif kDeckAuditor.IsVoteOrTemplate(Slide):
+                    Status = "[vote]"
+                else:
+                    Status = self.StatusFor(Index, Title, BodyWords, MinSize)
+                Results.append({
+                    "slide": Index,
+                    "title": Title,
+                    "body_words": BodyWords,
+                    "min_font_pt": round(MinSize, 1),
+                    "status": Status,
+                })
+            return Results
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kDeckAuditor.Audit")
+            return []
+
+
+class kAuditReport:
+    """Prints the audit records."""
+
+    @staticmethod
+    def PrintTable(Results, ShowAll=False):
+        """Print a tab-aligned report. Skipped slides hidden unless ShowAll."""
+        if kS.ErrorMode:
+            return None
+        try:
+            print(f"{'#':>3} {'words':>5} {'min_pt':>7}  {'status':<12} title")
+            print("-" * 100)
+            for Record in Results:
+                if not ShowAll and Record["status"].startswith("[skip"):
+                    continue
+                Title = Record["title"] or "(no title)"
+                print(f"{Record['slide']:>3} {Record['body_words']:>5} {Record['min_font_pt']:>5.0f}pt"
+                      f"   {Record['status']:<12} {Title[:65]}")
+            # Summary
+            Total = len(Results)
+            AuditN = sum(1 for Record in Results if Record["status"] == "** AUDIT")
+            TightN = sum(1 for Record in Results if Record["status"] == "ok-tight")
+            OkN = sum(1 for Record in Results if Record["status"] == "OK")
+            SkipN = sum(1 for Record in Results if Record["status"].startswith("[skip"))
+            VoteN = sum(1 for Record in Results if Record["status"] == "[vote]")
+            print("-" * 100)
+            print(f"  {Total} slides total: {AuditN} need audit, {TightN} tight, "
+                  f"{OkN} ok, {VoteN} vote, {SkipN} skipped")
+            return None
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kAuditReport.PrintTable")
+            return None
+
+
+class kAuditDeckApp:
+    """Command line."""
+
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
+        try:
+            Parser = argparse.ArgumentParser(
+                description="Audit a PowerPoint deck for word-budget and font-floor defects.",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog=__doc__,
+            )
+            Parser.add_argument("--file", help="Path to .pptx (default: active presentation)")
+            Parser.add_argument("--skip", default="",
+                                help="Comma-separated extra title-substrings to skip "
+                                     "(beyond defaults like HOPP, HOT Svar)")
+            Parser.add_argument("--all", action="store_true",
+                                help="Include skipped slides in output")
+            Parser.add_argument("--json", action="store_true",
+                                help="Output JSON instead of table")
+            Args = Parser.parse_args()
+
+            SkipPatterns = list(DEFAULT_SKIP_PATTERNS)
+            if Args.skip:
+                SkipPatterns.extend(Part.strip() for Part in Args.skip.split(",") if Part.strip())
+
+            kPptLocator.RequirePywin32("audit_deck.py")
+            Path = kPptLocator.Resolve(Args.file or "")
+            if kS.ErrorMode:
+                return 1
+            Auditor = kDeckAuditor(DEFAULT_SKIP_NUMBERS, SkipPatterns)
+            Results = []
+            with kPptSession(Path) as Pres:
+                if Pres is None:
+                    return 1
+                Results = Auditor.Audit(Pres)
+            if kS.ErrorMode:
+                return 1
+            if Args.json:
+                print(json.dumps(Results, indent=2, ensure_ascii=False))
+            else:
+                kAuditReport.PrintTable(Results, ShowAll=Args.all)
+            return 0
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kAuditDeckApp.Run")
+            return 1
 
 
 if __name__ == "__main__":
-    main()
+    kRun.Main(kAuditDeckApp)

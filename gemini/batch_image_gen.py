@@ -25,11 +25,27 @@ Run via uvx (the google-genai SDK is installed on demand):
     GEMINI_API_KEY="..." uvx --with google-genai python batch_image_gen.py [args]
 
 Environment:
-    GEMINI_API_KEY — required. Get from https://aistudio.google.com/apikey
+    GEMINI_API_KEY - required. Get from https://aistudio.google.com/apikey
 
 Models:
-    gemini-3.1-flash-image-preview  — fast, default
-    gemini-3-pro-image-preview      — higher quality, slower
+    gemini-3.1-flash-image-preview  - fast, default
+    gemini-3-pro-image-preview      - higher quality, slower
+
+Exit codes and errors (the kShared error pattern):
+    0  every job saved its image
+    1  at least one job was refused by the API (see below), google-genai is not
+       installed, or an unexpected error was reported (the run halts on it)
+    2  bad input: missing --prompt/--spec, --prompt without --out, GEMINI_API_KEY
+       not set, spec file missing or not a list of {prompt, out} entries
+    4  an unexpected error whose report waits for the user's yes
+       (stderr: "ERROR-REPORT-PENDING: <file>")
+    Batch choice: a refusal BY THE API for one job (google.genai APIError - quota,
+    safety block, bad model id - or a response without an image) is an expected
+    per-job outcome: "ERROR: ..." goes to stderr (also with --quiet), the other
+    jobs still run, and the exit code is 1. Anything else (network failure,
+    an unwritable output path, a bug) is unexpected: it is reported and the
+    remaining jobs are skipped. The spec is validated in full before the first
+    paid call.
 
 Notes:
     - Always prompt with "no text, no letters, no words, no logos, no captions"
@@ -39,8 +55,8 @@ Notes:
       background or fetch a stock image.
     - Output format: the API may return PNG OR JPEG depending on the model and
       request. Examples above use `.png` extension but you may receive JPEG
-      bytes (magic `ffd8ff…`). The script writes whatever the API returns to
-      the file path you supplied — extension is not enforced. Sniff magic bytes
+      bytes (magic `ffd8ff...`). The script writes whatever the API returns to
+      the file path you supplied - extension is not enforced. Sniff magic bytes
       if you need to know the format downstream. The companion `smoke_test.py`
       accepts both PNG and JPEG headers.
 """
@@ -51,109 +67,201 @@ import os
 import sys
 from pathlib import Path
 
+from kGenAi import kGenAi
+from kShared import ToolInputException, kRun, kS, kToolException
 
-def _import_genai():
-    try:
-        from google import genai
-        from google.genai import types
-        return genai, types
-    except ImportError:
-        sys.stderr.write(
-            "google-genai not installed. Run with:\n"
-            "  uvx --with google-genai python batch_image_gen.py [args]\n"
-        )
-        sys.exit(1)
+DEFAULT_MODEL = "gemini-3.1-flash-image-preview"
 
 
-def generate_one(client, types, prompt, out_path, aspect_ratio="16:9",
-                 model="gemini-3.1-flash-image-preview", quiet=False):
-    """Generate a single image and save it. Returns True on success."""
-    if not quiet:
-        print(f"Generating {out_path}...", flush=True)
-    try:
-        resp = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
+class kImageJob:
+    """One image to generate: prompt, output path, aspect ratio, model."""
+
+    def __init__(self, Prompt, OutPath, AspectRatio, Model):
+        try:
+            self.Prompt = Prompt
+            self.OutPath = OutPath
+            self.AspectRatio = AspectRatio
+            self.Model = Model
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kImageJob.__init__")
+
+    @staticmethod
+    def FromSpec(SpecPath, DefaultAspect, DefaultModel):
+        """The jobs of a JSON spec file (a list of {prompt, out, aspect_ratio?, model?}), validated in full."""
+        if kS.ErrorMode:
+            return []
+        try:
+            if not os.path.isfile(SpecPath):
+                raise ToolInputException(f"spec file not found: {SpecPath}")
+            with open(SpecPath, encoding="utf-8") as File:
+                Text = File.read()
+            Spec = kImageJob.ParseJson(Text, SpecPath)
+            if not isinstance(Spec, list):
+                raise ToolInputException(f"spec must be a JSON list of {{prompt, out}} entries: {SpecPath}")
+            Jobs = []
+            for Index, Entry in enumerate(Spec):
+                if not isinstance(Entry, dict) or not Entry.get("prompt") or not Entry.get("out"):
+                    raise ToolInputException(f"spec entry {Index} needs \"prompt\" and \"out\": {SpecPath}")
+                Jobs.append(kImageJob(Entry["prompt"], Entry["out"],
+                                      Entry.get("aspect_ratio", DefaultAspect), Entry.get("model", DefaultModel)))
+            return Jobs
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kImageJob.FromSpec(spec={SpecPath})")
+            return []
+
+    @staticmethod
+    def ParseJson(Text, SpecPath):
+        """The parsed spec; malformed JSON is a spec mistake (exit 2), not an unexpected error."""
+        if kS.ErrorMode:
+            return None
+        try:
+            try:
+                return json.loads(Text)
+            except json.JSONDecodeError as Bad:  # ERROR-SUPPRESSED-JUSTIFIED: converted to the expected ToolInputException, which reaches the user
+                raise ToolInputException(f"spec file is not valid JSON ({Bad}): {SpecPath}")
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kImageJob.ParseJson")
+            return None
+
+
+class kImageGenerator:
+    """Generates images through one Gemini client."""
+
+    def __init__(self, ApiKey, Quiet):
+        try:
+            self.Quiet = Quiet
+            self.GenAi, self.Types, self.Errors = kGenAi.Load("batch_image_gen.py")
+            self.Client = self.GenAi.Client(api_key=ApiKey) if self.GenAi is not None else None
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kImageGenerator.__init__")
+
+    def Request(self, Job):
+        """The API response for one job, or the refusal text when the API refuses it (APIError)."""
+        if kS.ErrorMode:
+            return None, ""
+        try:
+            Config = self.Types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
-                image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
-            ),
-        )
-        for part in resp.candidates[0].content.parts:
-            if part.inline_data and part.inline_data.data:
-                Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-                with open(out_path, "wb") as f:
-                    f.write(part.inline_data.data)
-                size = os.path.getsize(out_path)
-                if not quiet:
-                    print(f"  saved ({size} bytes)")
-                return True
-        # Errors always print, even in quiet mode
-        sys.stderr.write(f"ERROR: no image returned for {out_path}\n")
-        return False
-    except Exception as e:
-        sys.stderr.write(f"ERROR: {type(e).__name__}: {e}\n")
-        return False
+                image_config=self.Types.ImageConfig(aspect_ratio=Job.AspectRatio),
+            )
+            try:
+                return self.Client.models.generate_content(model=Job.Model, contents=Job.Prompt, config=Config), ""
+            except self.Errors.APIError as Refusal:  # ERROR-SUPPRESSED-JUSTIFIED: an API refusal (quota, safety, bad model) is an expected per-job outcome, printed to stderr and counted into exit 1
+                return None, f"{type(Refusal).__name__}: {Refusal}"
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kImageGenerator.Request(out={Job.OutPath})")
+            return None, ""
+
+    def ImageBytes(self, Response):
+        """The first inline image in the response, or None (safety block or text-only answer)."""
+        if kS.ErrorMode:
+            return None
+        try:
+            Candidates = Response.candidates or []
+            if not Candidates or Candidates[0].content is None:
+                return None
+            for Part in Candidates[0].content.parts or []:
+                if Part.inline_data and Part.inline_data.data:
+                    return Part.inline_data.data
+            return None
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kImageGenerator.ImageBytes")
+            return None
+
+    def Generate(self, Job):
+        """Generate one image and save it. True on success, False when the API refused the job."""
+        if kS.ErrorMode:
+            return False
+        try:
+            if not self.Quiet:
+                print(f"Generating {Job.OutPath}...", flush=True)
+            Response, Refusal = self.Request(Job)
+            if kS.ErrorMode:
+                return False
+            if Response is None:
+                sys.stderr.write(f"ERROR: {Refusal}\n")  # errors always print, even in quiet mode
+                return False
+            Data = self.ImageBytes(Response)
+            if kS.ErrorMode:
+                return False
+            if Data is None:
+                sys.stderr.write(f"ERROR: no image returned for {Job.OutPath}\n")
+                return False
+            Path(Job.OutPath).parent.mkdir(parents=True, exist_ok=True)
+            with open(Job.OutPath, "wb") as File:
+                File.write(Data)
+            if not self.Quiet:
+                print(f"  saved ({os.path.getsize(Job.OutPath)} bytes)")
+            return True
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, f"kImageGenerator.Generate(out={Job.OutPath})")
+            return False
 
 
-def main():
-    p = argparse.ArgumentParser(
-        description="Batch image generation via Google Gemini Flash Image.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    p.add_argument("--prompt", help="Inline prompt (single-image mode)")
-    p.add_argument("--out", help="Output PNG path (single-image mode)")
-    p.add_argument("--aspect", default="16:9",
-                   help="Aspect ratio (16:9, 1:1, 9:16, 3:4, 4:3)")
-    p.add_argument("--model", default="gemini-3.1-flash-image-preview",
-                   help="Model id (default: gemini-3.1-flash-image-preview)")
-    p.add_argument("--spec", help="JSON spec file with list of {prompt, out, "
-                                  "aspect_ratio?, model?} entries (batch mode)")
-    p.add_argument("--quiet", action="store_true",
-                   help="Suppress per-job progress output. Errors still go to stderr.")
-    args = p.parse_args()
+class kBatchImageGenApp:
+    """Command line."""
 
-    if not args.prompt and not args.spec:
-        p.error("Either --prompt + --out OR --spec required")
-    if args.prompt and not args.out:
-        p.error("--prompt requires --out")
-    if "GEMINI_API_KEY" not in os.environ:
-        p.error("GEMINI_API_KEY environment variable required")
+    def Run(self):
+        if kS.ErrorMode:
+            return 1
+        try:
+            Parser = argparse.ArgumentParser(
+                description="Batch image generation via Google Gemini Flash Image.",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog=__doc__,
+            )
+            Parser.add_argument("--prompt", help="Inline prompt (single-image mode)")
+            Parser.add_argument("--out", help="Output PNG path (single-image mode)")
+            Parser.add_argument("--aspect", default="16:9", help="Aspect ratio (16:9, 1:1, 9:16, 3:4, 4:3)")
+            Parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Model id (default: {DEFAULT_MODEL})")
+            Parser.add_argument("--spec", help="JSON spec file with list of {prompt, out, "
+                                               "aspect_ratio?, model?} entries (batch mode)")
+            Parser.add_argument("--quiet", action="store_true",
+                                help="Suppress per-job progress output. Errors still go to stderr.")
+            Args = Parser.parse_args()
 
-    genai, types = _import_genai()
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+            if not Args.prompt and not Args.spec:
+                raise ToolInputException("Either --prompt + --out OR --spec required")
+            if Args.prompt and not Args.out:
+                raise ToolInputException("--prompt requires --out")
+            if not os.environ.get("GEMINI_API_KEY"):
+                raise ToolInputException("GEMINI_API_KEY environment variable required "
+                                         "(get one from https://aistudio.google.com/apikey)")
 
-    # Build job list
-    jobs = []
-    if args.spec:
-        with open(args.spec, encoding="utf-8") as f:
-            spec = json.load(f)
-        for entry in spec:
-            jobs.append({
-                "prompt": entry["prompt"],
-                "out_path": entry["out"],
-                "aspect_ratio": entry.get("aspect_ratio", args.aspect),
-                "model": entry.get("model", args.model),
-            })
-    else:
-        jobs.append({
-            "prompt": args.prompt,
-            "out_path": args.out,
-            "aspect_ratio": args.aspect,
-            "model": args.model,
-        })
+            if Args.spec:
+                Jobs = kImageJob.FromSpec(Args.spec, Args.aspect, Args.model)
+            else:
+                Jobs = [kImageJob(Args.prompt, Args.out, Args.aspect, Args.model)]
+            if kS.ErrorMode:
+                return 1
 
-    # Run all jobs
-    successes = 0
-    for job in jobs:
-        if generate_one(client, types, quiet=args.quiet, **job):
-            successes += 1
+            Generator = kImageGenerator(os.environ["GEMINI_API_KEY"], Args.quiet)
+            Successes = 0
+            for Job in Jobs:
+                if Generator.Generate(Job):
+                    Successes += 1
+            if kS.ErrorMode:
+                return 1
 
-    if not args.quiet:
-        print(f"\n{successes}/{len(jobs)} images generated.")
-    sys.exit(0 if successes == len(jobs) else 1)
+            if not Args.quiet:
+                print(f"\n{Successes}/{len(Jobs)} images generated.")
+            return 0 if Successes == len(Jobs) else 1
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kBatchImageGenApp.Run")
+            return 1
 
 
 if __name__ == "__main__":
-    main()
+    kRun.Main(kBatchImageGenApp)

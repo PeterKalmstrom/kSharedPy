@@ -1,0 +1,35 @@
+"""The google-genai SDK (Gemini, Veo), loaded on demand.
+
+MASTER: kSharedPy/kshared/kGenAi.py - products and kSharedPy's own folders receive generated copies (kpy).
+A missing package is an expected state: ToolReportableException with the uvx install hint.
+
+    GenAi, Types, Errors = kGenAi.Load("batch_image_gen.py")
+"""
+import importlib
+import importlib.util
+
+from kShared import ToolReportableException, kS, kToolException
+
+INSTALL_HINT = "google-genai not installed. Run with:\n  uvx --with google-genai python {Script} [args]"
+
+
+class kGenAi:
+    """The google-genai SDK, loaded on demand: a missing package is an expected state with an install hint."""
+
+    @staticmethod
+    def Load(Script):
+        """Return (genai, types, errors) modules; raises ToolReportableException when the SDK is not installed."""
+        if kS.ErrorMode:
+            return None, None, None
+        try:
+            if importlib.util.find_spec("google") is None or importlib.util.find_spec("google.genai") is None:
+                raise ToolReportableException(INSTALL_HINT.format(Script=Script))
+            GenAi = importlib.import_module("google.genai")
+            Types = importlib.import_module("google.genai.types")
+            Errors = importlib.import_module("google.genai.errors")
+            return GenAi, Types, Errors
+        except kToolException:
+            raise
+        except Exception as e:
+            kS.GlobalErrorHandler(e, "kGenAi.Load")
+            return None, None, None

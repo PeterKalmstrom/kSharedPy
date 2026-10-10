@@ -37,6 +37,16 @@ GEMINI_API_KEY="..." uvx --with google-genai python batch_video_gen.py \
 | `--out PATH` | — | Output MP4 path (required with `--prompt`) |
 | `--model NAME` | `veo-3.1-generate-preview` | Veo model id |
 | `--spec PATH` | — | JSON spec file with list of jobs |
+| `--resolution` | API default (720p) | `720p` or `1080p` |
+| `--negative-prompt TEXT` | — | Things to keep out of the video |
+| `--image PATH` | — | Starting-frame image (image-to-video) |
+| `--mute` | off | Strip the audio track (needs ffmpeg on PATH) |
+| `--quiet` | off | No progress output; errors still go to stderr |
+
+**Exit codes:** 0 all saved; 1 a job was refused by the API (others still ran),
+google-genai missing, or an unexpected error (reported, run halted); 2 bad input
+(flags, `GEMINI_API_KEY` unset, spec/image missing, `--mute` without ffmpeg) -
+all checked before the first paid call; 4 an error report waits for the user's yes.
 
 ## Models
 

@@ -197,8 +197,11 @@ class kErrorReport:
 
     @staticmethod
     def SaveForLater():
-        """Write the pending reports to a file, so Claude can ask the user and send them only on yes."""
-        Path = os.path.join(tempfile.gettempdir(),
+        """Write the pending reports to a file, so Claude can ask the user and send them only on yes. The folder is
+        KPY_REPORT_DIR when set (a workstation that keeps everything in its workspace), else the temp folder."""
+        Folder = os.environ.get("KPY_REPORT_DIR", "") or tempfile.gettempdir()
+        os.makedirs(Folder, exist_ok=True)
+        Path = os.path.join(Folder,
                             f"{kErrorReport.ReportFilePrefix}{kErrorReport.Pending[0].CorrelationId}.json")
         with open(Path, "w", encoding="utf-8") as File:
             json.dump({"question": kErrorReport.Question,
